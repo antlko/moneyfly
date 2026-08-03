@@ -1,0 +1,19 @@
+{
+  "result": "success",
+  "provider": "https://www.exchangerate-api.com",
+  "documentation": "https://www.exchangerate-api.com/docs/free",
+  "terms_of_use": "https://www.exchangerate-api.com/terms",
+  "time_last_update_unix": 1785283201,
+  "time_last_update_utc": "Wed, 29 Jul 2026 00:00:01 +0000",
+  "time_next_update_unix": 1785369601,
+  "time_next_update_utc": "Thu, 30 Jul 2026 00:00:01 +0000",
+  "base_code": "EUR",
+  "rates": {
+    "EUR": 1,
+    "USD": 1.138108,
+    "HUF": 360.409427,
+    "UAH": 51.080258,
+    "GBP": 0.865432,
+    "PLN": 4.271
+  }
+}

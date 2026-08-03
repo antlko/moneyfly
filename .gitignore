@@ -1,0 +1,22 @@
+# Build output
+/bin/
+/tmp/
+/internal/transport/rest/assets/dist/*
+!/internal/transport/rest/assets/dist/index.html
+
+# Local configuration and data: the database is the sensitive artefact
+config.yaml
+*.db
+*.db-wal
+*.db-shm
+/uploads/
+/backups/
+
+# Node
+node_modules/
+.vite/
+
+# Editors and OS
+.DS_Store
+.idea/
+*.swp

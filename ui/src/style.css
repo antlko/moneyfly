@@ -1,0 +1,96 @@
+@import 'tailwindcss';
+
+/*
+  Dark mode is driven by a `data-theme` attribute on <html>, which the theme
+  composable sets from the system preference and from a manual override
+  (docs/08-ux.md §8.10). Resolving it in one place keeps every `dark:` utility
+  deterministic instead of half following the media query and half the attribute.
+*/
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme {
+  /* The mockup's purple, kept; its Payments/Cards/Country tabs, not. */
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-200: #ddd6fe;
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-brand-700: #6d28d9;
+  --color-brand-800: #5b21b6;
+  --color-brand-900: #4c1d95;
+
+  /*
+    The workbook's pastels (#F19189, #FCE8B2, #B7E1CD) remapped: hue meaning is
+    preserved, lightness and saturation are not, because those pastels fail
+    contrast in dark mode.
+  */
+  --color-state-severe: #e11d48;
+  --color-state-over: #f97316;
+  --color-state-approach: #d97706;
+  --color-state-within: #16a34a;
+  --color-state-zero: #64748b;
+  --color-state-absent: #94a3b8;
+
+  --font-tabular: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+:root[data-theme='dark'] body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+/*
+  Money is tabular with per-currency decimals, and right-aligned in the tables and
+  rows where columns must line up.
+
+  The rule lives in the base layer so a utility still wins: a hero figure is
+  `class="money text-left"`, and without the layer the bare `.money` selector
+  would tie on specificity, lose on source order, and drag every hero amount to
+  the right edge of its card.
+*/
+@layer base {
+  .money {
+    font-family: var(--font-tabular);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+}
+
+/* Visible focus for full keyboard reachability (WCAG 2.1 AA). */
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-brand-500;
+}
+
+/* Touch targets are at least 44px; the keypad and tab bar depend on this. */
+.tap-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,1966 @@
+openapi: 3.1.0
+info:
+  title: MoneyApp API
+  version: 1.0.0
+  description: |
+    Self-hosted budget and net-worth tracker.
+
+    Conventions:
+      * Session cookie auth. `user_id` is taken only from the session, never from input.
+      * Money is always an object with integer minor units. No floats on the wire.
+      * `null` means "not recorded". `0` means "recorded zero". Never interchangeable.
+      * Errors are RFC 7807 application/problem+json.
+      * Lists are cursor-paginated on (occurred_on, id).
+  license:
+    name: MIT
+
+servers:
+  - url: /api/v1
+
+security:
+  - sessionCookie: []
+
+tags:
+  - name: auth
+  - name: categories
+  - name: accounts
+  - name: transactions
+  - name: budgets
+  - name: snapshots
+  - name: imports
+  - name: reports
+  - name: settings
+  - name: metrics
+  - name: telegram
+  - name: ops
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        "204":
+          description: Session cookie set
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke the current session
+      responses:
+        "204": { description: Logged out }
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /auth/password:
+    post:
+      tags: [auth]
+      summary: Change the current user's password
+      description: |
+        Revokes every other session. While `must_change_password` is set this is the
+        only endpoint the session may reach; everything else answers 403.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password:     { type: string, minLength: 8 }
+              additionalProperties: false
+      responses:
+        "204": { description: Changed }
+        "401": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /auth/sessions:
+    get:
+      tags: [auth]
+      summary: List the current user's live sessions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /auth/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The session's id as returned by GET /auth/sessions.
+        schema: { type: string }
+    delete:
+      tags: [auth]
+      summary: Revoke one session
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /currencies:
+    get:
+      tags: [settings]
+      summary: The currency table, with each currency's exponent
+      description: |
+        Clients render money from `amount_minor` and `exponent`; this is where the
+        exponents come from. HUF is 0-decimal.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Currency" }
+
+  /categories:
+    get:
+      tags: [categories]
+      summary: List categories
+      parameters:
+        - name: kind
+          in: query
+          schema: { type: string, enum: [expense, income] }
+        - name: include_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Category" }
+    post:
+      tags: [categories]
+      summary: Create a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /categories/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [categories]
+      summary: Update a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+    delete:
+      tags: [categories]
+      summary: Archive a category
+      description: Archives rather than deletes. Historical transactions keep their category.
+      responses:
+        "204": { description: Archived }
+
+  /categories/{id}/merge:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [categories]
+      summary: Merge one category into another
+      description: |
+        Rewrites every transaction and budget reference, archives the source, and
+        leaves an alias behind so the old source name still resolves on import.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [into_id]
+              properties:
+                into_id: { type: integer }
+              additionalProperties: false
+      responses:
+        "204": { description: Merged }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /categories/aliases:
+    get:
+      tags: [categories]
+      summary: List category aliases
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Alias" }
+    post:
+      tags: [categories]
+      summary: Create a category alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_id, source_name]
+              properties:
+                category_id: { type: integer }
+                source_name: { type: string }
+                source:      { type: string, default: monefy }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alias" }
+
+  /accounts:
+    get:
+      tags: [accounts]
+      summary: List accounts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Account" }
+    post:
+      tags: [accounts]
+      summary: Create an account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+
+  /categories/aliases/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      tags: [categories]
+      summary: Delete a category alias
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /accounts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [accounts]
+      summary: Update an account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [accounts]
+      summary: Archive an account
+      description: Archives rather than deletes; historical rows keep their account.
+      responses:
+        "204": { description: Archived }
+
+  /accounts/aliases:
+    get:
+      tags: [accounts]
+      summary: List account aliases
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Alias" }
+    post:
+      tags: [accounts]
+      summary: Create an account alias
+      description: |
+        Monefy names accounts after currencies, so the same logical account appears
+        under different names across exports.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id, source_name]
+              properties:
+                account_id:  { type: integer }
+                source_name: { type: string }
+                source:      { type: string, default: monefy }
+              additionalProperties: false
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alias" }
+
+  /accounts/aliases/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      tags: [accounts]
+      summary: Delete an account alias
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /transactions:
+    get:
+      tags: [transactions]
+      summary: List transactions
+      parameters:
+        - { name: from,        in: query, schema: { type: string, format: date } }
+        - { name: to,          in: query, schema: { type: string, format: date } }
+        - { name: category_id, in: query, schema: { type: integer } }
+        - { name: account_id,  in: query, schema: { type: integer } }
+        - name: kind
+          in: query
+          schema: { type: string, enum: [expense, income, transfer_in, transfer_out] }
+        - { name: q,      in: query, schema: { type: string }, description: Free-text search over description and merchant }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit,  in: query, schema: { type: integer, default: 50, maximum: 500 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransactionPage" }
+    post:
+      tags: [transactions]
+      summary: Create a transaction
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransactionInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /transactions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [transactions]
+      summary: Get a transaction
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+        "404": { $ref: "#/components/responses/Problem" }
+    patch:
+      tags: [transactions]
+      summary: Update a transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransactionInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+    delete:
+      tags: [transactions]
+      summary: Soft-delete a transaction
+      responses:
+        "204": { description: Deleted }
+
+  /transfers:
+    post:
+      tags: [transactions]
+      summary: Create a transfer
+      description: Creates a paired transfer_out and transfer_in sharing one transfer_group_id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_account_id, to_account_id, occurred_on, amount]
+              properties:
+                from_account_id: { type: integer }
+                to_account_id:   { type: integer }
+                occurred_on:     { type: string, format: date }
+                amount:          { $ref: "#/components/schemas/Money" }
+                description:     { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Transaction" }
+
+  /budgets:
+    get:
+      tags: [budgets]
+      summary: Budgets for a period
+      parameters:
+        - $ref: "#/components/parameters/PeriodQuery"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Budget" }
+
+  /budgets/bulk:
+    post:
+      tags: [budgets]
+      summary: Seed budgets across a period range
+      description: Applies one planned figure per category to every month in the range.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_period, to_period, items]
+              properties:
+                from_period: { type: string, pattern: '^\d{4}-\d{2}$' }
+                to_period:   { type: string, pattern: '^\d{4}-\d{2}$' }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [category_id, planned]
+                    properties:
+                      category_id: { type: integer }
+                      planned:     { $ref: "#/components/schemas/Money" }
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  periods_written: { type: integer }
+                  rows_written:    { type: integer }
+
+  /budgets/{category_id}/{period}:
+    parameters:
+      - name: category_id
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: period
+        in: path
+        required: true
+        schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+    put:
+      tags: [budgets]
+      summary: Set one category's plan for one month
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planned]
+              properties:
+                planned: { $ref: "#/components/schemas/Money" }
+              additionalProperties: false
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Budget" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [budgets]
+      summary: Remove a plan
+      description: |
+        An absent plan is "not planned", which is a different fact from a plan of
+        zero, so this is not the same as setting it to 0.
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /snapshots:
+    get:
+      tags: [snapshots]
+      summary: Snapshots for a period
+      description: Returns every account with the previous month pre-filled, for the entry screen.
+      parameters:
+        - $ref: "#/components/parameters/PeriodQuery"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Snapshot" }
+
+    post:
+      tags: [snapshots]
+      summary: Record a whole month at once
+      description: |
+        The confirm-or-adjust screen, written in one transaction so a half-saved
+        month cannot exist. This is the endpoint behind the roughly thirty
+        workbook cells the capital block used to need every month.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period, items]
+              properties:
+                period: { type: string, pattern: '^\d{4}-\d{2}$' }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [account_id]
+                    properties:
+                      account_id:    { type: integer }
+                      amount:        { $ref: "#/components/schemas/Money" }
+                      quantity_nano: { type: integer, nullable: true }
+                      note:          { type: string }
+      responses:
+        "200":
+          description: Written
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  period:       { type: string }
+                  rows_written: { type: integer }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /snapshots/{account_id}/{period}:
+    parameters:
+      - name: account_id
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: period
+        in: path
+        required: true
+        schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+    put:
+      tags: [snapshots]
+      summary: Record one account's balance
+      description: |
+        Writing to a computed parent is refused with 422: its value is the sum of
+        its children. Exactly one of `amount` and `quantity_nano` must be given.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:        { $ref: "#/components/schemas/Money" }
+                quantity_nano: { type: integer, nullable: true }
+                note:          { type: string }
+      responses:
+        "200":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [snapshots]
+      summary: Remove one snapshot
+      description: A month with no snapshot is a gap. It is never interpolated.
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /snapshots/{period}/reconciliation:
+    parameters:
+      - name: period
+        in: path
+        required: true
+        schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+    get:
+      tags: [snapshots]
+      summary: Snapshot versus transaction-implied balance
+      description: |
+        The snapshot is authoritative. The difference is reported so it can be
+        investigated, and nothing is ever corrected automatically
+        (docs/adr/0003-snapshot-reconcile-balances.md).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  period: { type: string }
+                  note:   { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        account_id: { type: integer }
+                        name:       { type: string }
+                        snapshot:
+                          oneOf:
+                            - $ref: "#/components/schemas/Money"
+                            - type: "null"
+                        implied:
+                          oneOf:
+                            - $ref: "#/components/schemas/Money"
+                            - type: "null"
+                        difference:
+                          oneOf:
+                            - $ref: "#/components/schemas/Money"
+                            - type: "null"
+                          description: snapshot minus implied; null when either side is absent.
+
+  /reports/net-worth-in/{currency}:
+    parameters:
+      - name: currency
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [reports]
+      summary: Net worth expressed in another currency
+      description: The workbook's rows 71-72, at each period's own rate rather than today's.
+      parameters:
+        - $ref: "#/components/parameters/PeriodQuery"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  period:        { type: string }
+                  currency:      { type: string }
+                  base_currency: { type: string }
+                  general:
+                    oneOf:
+                      - $ref: "#/components/schemas/Money"
+                      - type: "null"
+                  value:
+                    oneOf:
+                      - $ref: "#/components/schemas/Money"
+                      - type: "null"
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /imports:
+    get:
+      tags: [imports]
+      summary: Import batch history
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ImportBatch" }
+    post:
+      tags: [imports]
+      summary: Upload a file for import
+      description: |
+        Stores the raw file, parses it, resolves aliases and dedups. Nothing is
+        written to the ledger until POST /imports/{id}/commit.
+
+        Re-uploading a file whose sha256 was already committed returns 200 with
+        that original batch and `already_imported: true`, rather than
+        reprocessing it. A fresh export containing the same rows is a different
+        file and is analysed normally, reporting them as duplicates.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Batch created; previewed or awaiting mapping
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportBatch" }
+        "200":
+          description: This exact file was already imported; the original batch is returned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportBatch" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /imports/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [imports]
+      summary: Preview a batch
+      description: |
+        Re-runs the analysis against the retained file, so the counts, the
+        suggestions and the vanished list always reflect the database as it is
+        now rather than as it was at upload.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /imports/{id}/rows:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [imports]
+      summary: List the lines of a batch
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [new, duplicate, unmapped, rejected, committed] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 500, maximum: 5000 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ImportRow" }
+
+  /imports/{id}/mappings:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [imports]
+      summary: Resolve unmapped names
+      description: |
+        Records each decision as an alias, then re-runs the analysis. A name
+        mapped here never asks again. Mapping onto a category that does not yet
+        exist is two steps: POST /categories, then map onto the new id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                categories:
+                  type: array
+                  items: { $ref: "#/components/schemas/ImportMapping" }
+                accounts:
+                  type: array
+                  items: { $ref: "#/components/schemas/ImportMapping" }
+      responses:
+        "200":
+          description: Batch re-resolved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /imports/{id}/commit:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [imports]
+      summary: Commit a previewed batch
+      description: |
+        Rejected with 409 when rows_unmapped is greater than zero.
+        This is the guarantee against silently discarding unrecognised categories.
+      responses:
+        "200":
+          description: Committed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportBatch" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /imports/{id}/revert:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [imports]
+      summary: Revert a committed batch
+      responses:
+        "200":
+          description: Reverted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportBatch" }
+
+  /reports/budget:
+    get:
+      tags: [reports]
+      summary: Plan versus actual for a period
+      parameters:
+        - $ref: "#/components/parameters/PeriodQuery"
+        - $ref: "#/components/parameters/Valuation"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BudgetReport" }
+
+  /reports/summary:
+    get:
+      tags: [reports]
+      summary: Roll-up rows across a range of periods
+      description: |
+        The workbook's rows 27, 31, 32 and 33 for every month in the range.
+        Defaults to the fiscal year containing the most recent data.
+
+        A month with no data reports `recorded: false` and null for every money
+        field. It is never 0 and never the sheet's -1 sentinel.
+      parameters:
+        - $ref: "#/components/parameters/FromPeriod"
+        - $ref: "#/components/parameters/ToPeriod"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportSummary" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /reports/categories:
+    get:
+      tags: [reports]
+      summary: The year grid — categories by month
+      description: |
+        The workbook's rows 9-26 with columns C (average), E-P (the months) and T
+        (results), plus the roll-up rows underneath.
+      parameters:
+        - $ref: "#/components/parameters/FromPeriod"
+        - $ref: "#/components/parameters/ToPeriod"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportCategories" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /reports/capital:
+    get:
+      tags: [reports]
+      summary: Net worth, allocation and runway
+      parameters:
+        - $ref: "#/components/parameters/PeriodQuery"
+        - $ref: "#/components/parameters/Valuation"
+        - name: burn_mode
+          in: query
+          schema:
+            type: string
+            enum: [essential_planned, actual_trailing_3, actual_trailing_12, legacy_blend]
+            default: actual_trailing_3
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CapitalReport" }
+
+  /reports/capital/series:
+    get:
+      tags: [reports]
+      summary: Net worth over time, with the real and FX split
+      parameters:
+        - $ref: "#/components/parameters/FromPeriod"
+        - $ref: "#/components/parameters/ToPeriod"
+        - name: burn_mode
+          in: query
+          schema:
+            type: string
+            enum: [essential_planned, actual_trailing_3, actual_trailing_12, legacy_blend]
+            default: actual_trailing_3
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  from:          { type: string }
+                  to:            { type: string }
+                  base_currency: { type: string }
+                  burn_mode:     { type: string }
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        period:   { type: string }
+                        recorded: { type: boolean }
+                        general:
+                          oneOf:
+                            - $ref: "#/components/schemas/Money"
+                            - type: "null"
+                        ready_for_usage:
+                          oneOf:
+                            - $ref: "#/components/schemas/Money"
+                            - type: "null"
+                        runway_months: { type: number, nullable: true }
+                        change: { $ref: "#/components/schemas/CapitalChange" }
+
+  /settings:
+    get:
+      tags: [settings]
+      summary: All settings with provider state
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Setting" }
+
+  /providers:
+    get:
+      tags: [settings]
+      summary: The configured rate sources
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Provider" }
+
+  /settings/{key}:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [settings]
+      summary: Update a setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:            { type: string, enum: [manual, auto] }
+                manual_value:
+                  type: string
+                  description: |
+                    The user's own figure. It wins over the provider's whenever it
+                    is present, in either mode.
+                clear_manual:
+                  type: boolean
+                  description: |
+                    Drops the override and goes back to the provider's value.
+                    Omitting `manual_value` and sending `clear_manual: true` are
+                    different requests: the first leaves the override alone.
+                provider_key:    { type: string }
+                refresh_seconds: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Setting" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /settings/{key}/refresh:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [settings]
+      summary: Force a provider fetch now
+      description: |
+        A provider outage is **not** an error here. The request succeeds, the
+        message lands in `last_error`, the previous `last_value` stands and the
+        setting reads as stale. Nothing a user is looking at breaks because a free
+        API is down (docs/adr/0009-dated-fx-provider-chain.md).
+
+        Refreshing a manual setting is refused with 422: there is no provider to
+        fetch from.
+      responses:
+        "200":
+          description: Refreshed, or last value retained on failure
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Setting" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /fx/rates:
+    get:
+      tags: [settings]
+      summary: Rate history
+      parameters:
+        - { name: base,  in: query, schema: { type: string, default: EUR } }
+        - { name: quote, in: query, schema: { type: string } }
+        - { name: from,  in: query, schema: { type: string, format: date } }
+        - { name: to,    in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FxRate" }
+
+  /fx/rates/latest:
+    get:
+      tags: [settings]
+      summary: The most recent rate per currency, with its age
+      description: |
+        FX markets close, so weekend and holiday gaps are normal rather than errors.
+        `age_days` is what the UI badges as staleness.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    rate:     { $ref: "#/components/schemas/FxRate" }
+                    age_days: { type: integer }
+
+  /metrics:
+    get:
+      tags: [metrics]
+      summary: Built-in and user-defined metrics
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Metric" }
+
+  /metrics/validate:
+    post:
+      tags: [metrics]
+      summary: Parse a metric definition without saving
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [definition]
+              properties:
+                definition: { type: string }
+      responses:
+        "200":
+          description: Parse result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:      { type: boolean }
+                  errors:
+                    type: array
+                    items: { type: string }
+                  references:
+                    type: array
+                    items: { type: string }
+
+  /telegram/link-code:
+    post:
+      tags: [telegram]
+      summary: Mint a single-use link code
+      description: |
+        A six-character code, valid once, for ten minutes. Send `/link <code>` from
+        the chat you want to import from. The code is shown once and cannot be read
+        back — it is a credential for as long as it lives.
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:         { type: string }
+                  expires_at:   { type: string, format: date-time }
+                  instructions: { type: string }
+
+  /telegram/links:
+    get:
+      tags: [telegram]
+      summary: The chats linked to this account
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TelegramLink" }
+
+  /telegram/links/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      tags: [telegram]
+      summary: Revoke a link
+      description: The chat can import nothing from the moment this returns.
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/Problem" }
+  /export:
+    get:
+      tags: [ops]
+      summary: Export everything this user owns
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: { schema: { type: object } }
+            text/csv:         { schema: { type: string } }
+
+  /healthz:
+    get:
+      tags: [ops]
+      summary: Liveness
+      security: []
+      responses:
+        "200": { description: Alive }
+
+  /readyz:
+    get:
+      tags: [ops]
+      summary: Readiness
+      description: Unhealthy while the schema version is behind the binary's expectation.
+      security: []
+      responses:
+        "200": { description: Ready }
+        "503": { $ref: "#/components/responses/Problem" }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: moneyapp_session
+
+  parameters:
+    FromPeriod:
+      name: from
+      in: query
+      schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+      description: First month, inclusive. Defaults with `to` to the latest fiscal year.
+    ToPeriod:
+      name: to
+      in: query
+      schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+      description: Last month, inclusive.
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    PeriodQuery:
+      name: period
+      in: query
+      required: true
+      schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+    Valuation:
+      name: valuation
+      in: query
+      description: |
+        contemporaneous values each period at its own rate.
+        constant values everything at today's rate, reproducing the legacy spreadsheet.
+      schema:
+        type: string
+        enum: [contemporaneous, constant]
+        default: contemporaneous
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      schema: { type: string }
+
+  responses:
+    Problem:
+      description: RFC 7807 problem document
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:   { type: string }
+        title:  { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:   { type: string }
+              message: { type: string }
+
+    Money:
+      type: object
+      required: [amount_minor, currency, exponent]
+      properties:
+        amount_minor:
+          type: integer
+          format: int64
+          description: Value in minor units. HUF has exponent 0, so 1000 means 1000 HUF.
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        exponent: { type: integer, minimum: 0, maximum: 4 }
+
+    BaseMoney:
+      allOf:
+        - $ref: "#/components/schemas/Money"
+        - type: object
+          properties:
+            fx_rate_id: { type: integer, nullable: true }
+            as_of_date: { type: string, format: date, nullable: true }
+
+    User:
+      type: object
+      properties:
+        id:                      { type: integer }
+        email:                   { type: string, format: email }
+        display_name:            { type: string, nullable: true }
+        role:                    { type: string, enum: [admin, user, readonly] }
+        base_currency:           { type: string }
+        timezone:                { type: string }
+        fiscal_year_start_month: { type: integer, minimum: 1, maximum: 12 }
+        must_change_password:
+          type: boolean
+          description: |
+            While true, every endpoint except POST /auth/password answers 403.
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          description: |
+            The session's identifier. It is the SHA-256 of the token, not the token
+            itself, so listing sessions never exposes a usable credential.
+        user_agent: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        current:    { type: boolean, description: True for the session making the request. }
+
+    Currency:
+      type: object
+      properties:
+        code:     { type: string, minLength: 3, maxLength: 3 }
+        exponent: { type: integer, description: "Decimal places. HUF is 0." }
+        symbol:   { type: string }
+        name:     { type: string }
+
+    Category:
+      type: object
+      properties:
+        id:           { type: integer }
+        name:         { type: string }
+        kind:         { type: string, enum: [expense, income] }
+        is_essential: { type: boolean, description: Membership of Possible Minimum }
+        icon:         { type: string, nullable: true }
+        color:        { type: string, nullable: true }
+        sort_order:   { type: integer }
+        parent_id:    { type: integer, nullable: true }
+        archived_at:  { type: string, format: date-time, nullable: true }
+
+    CategoryInput:
+      type: object
+      required: [name, kind]
+      properties:
+        name:         { type: string, minLength: 1 }
+        kind:         { type: string, enum: [expense, income] }
+        is_essential: { type: boolean, default: false }
+        icon:         { type: string }
+        color:        { type: string }
+        sort_order:   { type: integer }
+        parent_id:    { type: integer, nullable: true }
+      additionalProperties: false
+
+    Alias:
+      type: object
+      properties:
+        id:          { type: integer }
+        source:      { type: string }
+        source_name: { type: string }
+        target_id:   { type: integer }
+        target_name: { type: string }
+
+    Account:
+      type: object
+      properties:
+        id:                      { type: integer }
+        name:                    { type: string }
+        asset_class:
+          type: string
+          enum: [cash, bank, deposit, investment, metal, crypto, other]
+        currency:                { type: string }
+        is_liquid:               { type: boolean }
+        counts_toward_net_worth: { type: boolean }
+        price_ticker:            { type: string, nullable: true }
+        cost_basis:              { $ref: "#/components/schemas/Money" }
+        parent_id:               { type: integer, nullable: true }
+        sort_order:              { type: integer }
+        archived_at:             { type: string, format: date-time, nullable: true }
+        is_computed:
+          type: boolean
+          description: Parent accounts are summed from children and reject direct values.
+
+    AccountInput:
+      type: object
+      required: [name, asset_class, currency]
+      properties:
+        name:        { type: string, minLength: 1 }
+        asset_class:
+          type: string
+          enum: [cash, bank, deposit, investment, metal, crypto, other]
+        currency:                { type: string }
+        is_liquid:               { type: boolean, default: true }
+        counts_toward_net_worth: { type: boolean, default: true }
+        price_ticker:            { type: string }
+        cost_basis_minor:        { type: integer, format: int64, nullable: true }
+        parent_id:               { type: integer, nullable: true }
+        sort_order:              { type: integer }
+      additionalProperties: false
+
+    Transaction:
+      type: object
+      properties:
+        id:            { type: integer }
+        account_id:    { type: integer }
+        account_name:  { type: string }
+        category_id:   { type: integer, nullable: true }
+        category_name: { type: string }
+        occurred_on: { type: string, format: date }
+        kind:        { type: string, enum: [expense, income, transfer_in, transfer_out] }
+        amount:      { $ref: "#/components/schemas/Money" }
+        base_amount: { $ref: "#/components/schemas/BaseMoney" }
+        description: { type: string, nullable: true }
+        merchant:    { type: string, nullable: true }
+        occurrence:  { type: integer }
+        unconverted:
+          type: boolean
+          description: |
+            True when base_amount is null because no rate covered this date. The
+            write is never blocked by a missing rate, so the client is told instead.
+        transfer_group_id: { type: integer, nullable: true }
+        import_batch_id:   { type: integer, nullable: true }
+
+    TransactionInput:
+      type: object
+      required: [account_id, occurred_on, kind, amount]
+      properties:
+        account_id:  { type: integer }
+        category_id:
+          type: integer
+          nullable: true
+          description: Required for expense and income; forbidden for transfers.
+        occurred_on: { type: string, format: date }
+        kind:        { type: string, enum: [expense, income] }
+        amount:      { $ref: "#/components/schemas/Money" }
+        description: { type: string }
+        merchant:    { type: string }
+      additionalProperties: false
+
+    TransactionPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Transaction" }
+        next_cursor: { type: string, nullable: true }
+        has_more:    { type: boolean }
+
+    Budget:
+      type: object
+      properties:
+        category_id:   { type: integer }
+        category_name: { type: string }
+        period:        { type: string }
+        planned:       { $ref: "#/components/schemas/Money" }
+
+    Snapshot:
+      type: object
+      properties:
+        account_id:      { type: integer }
+        account_name:    { type: string }
+        period:          { type: string }
+        amount:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        quantity_nano:
+          type: integer
+          nullable: true
+          description: Alternative to amount, for metals and crypto priced by a provider.
+        base_amount:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        previous_amount:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: Prior month, for pre-filling the entry screen.
+        asset_class:  { type: string }
+        currency:     { type: string }
+        is_liquid:    { type: boolean }
+        counts_toward_net_worth: { type: boolean }
+        computed:
+          type: boolean
+          description: |
+            A parent account. Its value is the sum of its children and a direct
+            write is refused with 422.
+        value:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: Base-currency value, rolled up for a parent.
+        note:         { type: string, nullable: true }
+
+    ImportBatch:
+      type: object
+      properties:
+        id:       { type: integer }
+        source:   { type: string }
+        origin:   { type: string, enum: [web, telegram, cli] }
+        filename: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [received, parsed, needs_mapping, previewed, committed, reverted, failed]
+        rows_total:     { type: integer }
+        rows_new:       { type: integer }
+        rows_duplicate: { type: integer }
+        rows_unmapped:  { type: integer }
+        rows_rejected:  { type: integer }
+        file_sha256:    { type: string }
+        error:          { type: string }
+        created_at:     { type: string, format: date-time }
+        committed_at:   { type: string, format: date-time, nullable: true }
+        reverted_at:    { type: string, format: date-time, nullable: true }
+        already_imported:
+          type: boolean
+          description: This exact file had already been committed; nothing was reprocessed.
+
+    ImportMapping:
+      type: object
+      required: [source_name, target_id]
+      properties:
+        source_name:
+          type: string
+          description: The name exactly as it appears in the file, untrimmed.
+        target_id: { type: integer }
+
+    ImportRow:
+      type: object
+      properties:
+        id:            { type: integer }
+        line_no:       { type: integer }
+        raw_line:      { type: string }
+        occurred_on:   { type: string, format: date, nullable: true }
+        account_name:  { type: string }
+        category_name: { type: string }
+        amount:        { $ref: "#/components/schemas/Money", nullable: true }
+        description:   { type: string, nullable: true }
+        status:
+          type: string
+          enum: [new, duplicate, unmapped, rejected, committed]
+        reason:         { type: string }
+        transaction_id: { type: integer, nullable: true }
+
+    ImportUnmappedName:
+      type: object
+      description: |
+        One source name blocking the batch. row_count makes the cost of the
+        decision visible, which is the point of the mapping screen.
+      properties:
+        source_name: { type: string }
+        row_count:   { type: integer }
+        reason:      { type: string }
+        suggestion:
+          type: object
+          nullable: true
+          description: A proposal, never an application. Confirming it is what creates the alias.
+          properties:
+            id:   { type: integer }
+            name: { type: string }
+            confidence:
+              type: string
+              enum: [high, medium]
+              description: high for a case or whitespace variant, medium for an edit-distance match.
+
+    ImportVanishedRow:
+      type: object
+      properties:
+        transaction_id: { type: integer }
+        occurred_on:    { type: string, format: date }
+        account_name:   { type: string }
+        category_name:  { type: string }
+        amount:         { $ref: "#/components/schemas/Money" }
+        description:    { type: string }
+
+    ImportPreview:
+      type: object
+      properties:
+        batch_id: { type: integer }
+        filename: { type: string }
+        origin:   { type: string, enum: [web, telegram, cli] }
+        status:
+          type: string
+          enum: [received, parsed, needs_mapping, previewed, committed, reverted, failed]
+        date_range:
+          nullable: true
+          type: object
+          properties:
+            from: { type: string, format: date }
+            to:   { type: string, format: date }
+        rows_total:     { type: integer }
+        rows_new:       { type: integer }
+        rows_duplicate: { type: integer }
+        rows_unmapped:  { type: integer }
+        rows_rejected:  { type: integer }
+        months_touched:
+          type: integer
+          description: Distinct calendar months containing at least one row.
+        unmapped_categories:
+          type: array
+          items: { $ref: "#/components/schemas/ImportUnmappedName" }
+        unmapped_accounts:
+          type: array
+          items: { $ref: "#/components/schemas/ImportUnmappedName" }
+        vanished:
+          type: array
+          description: Stored rows absent from the file's date range. Flagged, never auto-deleted.
+          items: { $ref: "#/components/schemas/ImportVanishedRow" }
+        rejected:
+          type: array
+          items: { $ref: "#/components/schemas/ImportRow" }
+        by_currency:
+          type: object
+          additionalProperties: { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
+        committed_at: { type: string, format: date-time, nullable: true }
+        reverted_at:  { type: string, format: date-time, nullable: true }
+
+    PeriodSummary:
+      type: object
+      description: |
+        One month of the roll-up rows. Every money field is null when
+        `recorded` is false — absent is not zero.
+      properties:
+        period:   { type: string }
+        recorded: { type: boolean }
+        spend_total:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        planned_total:    { $ref: "#/components/schemas/Money" }
+        possible_minimum: { $ref: "#/components/schemas/Money" }
+        income:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        diff:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        saved_percent:
+          type: number
+          nullable: true
+          description: Unclamped. Null when income is zero.
+        unconverted: { type: integer }
+
+    ReportSummary:
+      type: object
+      properties:
+        from:          { type: string }
+        to:            { type: string }
+        base_currency: { type: string }
+        fiscal_year:   { type: string }
+        periods:
+          type: array
+          items: { $ref: "#/components/schemas/PeriodSummary" }
+
+    CategoryCell:
+      type: object
+      properties:
+        period: { type: string }
+        actual:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: Null for an unrecorded month. The grid renders that blank, never 0.
+        planned:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        ratio: { type: number, nullable: true }
+        state:
+          type: string
+          enum: [severely_over, over, approaching, within, zero, not_recorded]
+        state_label: { type: string }
+
+    CategorySeries:
+      type: object
+      properties:
+        category_id:  { type: integer }
+        name:         { type: string }
+        icon:         { type: string, nullable: true }
+        color:        { type: string, nullable: true }
+        is_essential: { type: boolean }
+        archived:     { type: boolean }
+        average:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: Column C — mean over recorded months only.
+        total:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: Column T — sum over recorded months, without the sheet's -1 sentinel.
+        cells:
+          type: array
+          items: { $ref: "#/components/schemas/CategoryCell" }
+
+    ReportCategories:
+      type: object
+      properties:
+        from:          { type: string }
+        to:            { type: string }
+        base_currency: { type: string }
+        periods:
+          type: array
+          items: { type: string }
+        recorded:
+          type: object
+          additionalProperties: { type: boolean }
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/CategorySeries" }
+        summary:
+          type: array
+          items: { $ref: "#/components/schemas/PeriodSummary" }
+
+    BudgetReport:
+      type: object
+      properties:
+        period:        { type: string }
+        valuation:     { type: string }
+        base_currency: { type: string }
+        unconverted:
+          type: integer
+          description: |
+            Transactions in this period with no rate for their date. They are
+            excluded from the totals and reported rather than counted as zero.
+        spend_total:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: null when the period recorded nothing at all.
+        planned_total: { $ref: "#/components/schemas/Money" }
+        income:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        diff:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        saved_percent:
+          type: number
+          nullable: true
+          description: Ratio, unclamped. Negative when spend exceeds income; null when income is zero.
+        possible_minimum: { $ref: "#/components/schemas/Money" }
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              category_id: { type: integer }
+              name:        { type: string }
+              actual:
+                oneOf:
+                  - $ref: "#/components/schemas/Money"
+                  - type: "null"
+                description: null means the period has no recorded data, distinct from zero.
+              icon:        { type: string, nullable: true }
+              color:       { type: string, nullable: true }
+              is_essential: { type: boolean }
+              planned:
+                oneOf:
+                  - $ref: "#/components/schemas/Money"
+                  - type: "null"
+                description: null when no plan was recorded, which differs from a plan of zero.
+              average:
+                oneOf:
+                  - $ref: "#/components/schemas/Money"
+                  - type: "null"
+                description: |
+                  Mean over every recorded month, the workbook's column C. It holds
+                  steady as the month on screen changes, and is null until there is
+                  data to average — never 0.
+              ratio:   { type: number, nullable: true }
+              state:
+                type: string
+                enum: [severely_over, over, approaching, within, zero, not_recorded]
+              state_label:
+                type: string
+                description: |
+                  Accessible wording for the state, so colour is never the only
+                  signal and every client says the same thing.
+
+    CapitalChange:
+      type: object
+      description: |
+        The month's movement, split into what was actually saved and what the
+        currencies did. The workbook reported only their sum, so a month when the
+        hryvnia moved looked identical to a month of genuine saving (deviation D8).
+      properties:
+        recorded:
+          type: boolean
+          description: false when there is no previous month to compare against.
+        total:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        real:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        fx:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+
+    CapitalReport:
+      type: object
+      properties:
+        period:        { type: string }
+        base_currency: { type: string }
+        general:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+          description: Null for a month with no balances recorded at all.
+        ready_for_usage:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        runway_months:
+          type: number
+          nullable: true
+          description: Null when the burn rate is zero — "forever" is not a number of months.
+        burn_mode: { type: string }
+        burn_rate:
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+        change: { $ref: "#/components/schemas/CapitalChange" }
+        allocation:
+          type: array
+          description: |
+            Leaf accounts only, converted to base currency first, so the shares sum
+            to exactly 1. The sheet's doughnut plotted parents alongside their
+            children and divided unconverted amounts, reaching about 162% with
+            `Cash HUF` at 41.4% (deviation D6).
+          items:
+            type: object
+            properties:
+              account_id:  { type: integer }
+              name:        { type: string }
+              asset_class: { type: string }
+              value:       { $ref: "#/components/schemas/Money" }
+              share:       { type: number }
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/Snapshot" }
+
+    TelegramLink:
+      type: object
+      properties:
+        id:         { type: integer }
+        chat_id:    { type: integer, nullable: true }
+        expires_at: { type: string, format: date-time }
+        linked_at:  { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        live:
+          type: boolean
+          description: Bound to a chat and not revoked. At most one per chat.
+        created_at: { type: string, format: date-time }
+
+    Setting:
+      type: object
+      description: |
+        One configurable value plus how it is maintained. Values are decimal text,
+        never floats, for the same reason fx_rate.rate is.
+      properties:
+        key:          { type: string }
+        mode:         { type: string, enum: [manual, auto] }
+        manual_value: { type: string, nullable: true }
+        provider_key: { type: string, nullable: true }
+        effective_value:
+          type: string
+          nullable: true
+          description: What the application uses — the manual value when there is one.
+        last_value:
+          type: string
+          nullable: true
+          description: |
+            The provider's latest figure. It is kept even while a manual value
+            overrides it, so the screen can say "auto suggested 51.08 — you set
+            51.00".
+        overridden:
+          type: boolean
+          description: A manual value is sitting on top of a provider value.
+        refresh_seconds: { type: integer }
+        last_fetched_at: { type: string, format: date-time, nullable: true }
+        last_error:      { type: string, nullable: true }
+        stale:
+          type: boolean
+          description: |
+            An auto setting that has missed its refresh window. A manual setting is
+            never stale — nobody promised to update it.
+        updated_at: { type: string, format: date-time }
+
+    Provider:
+      type: object
+      description: |
+        A configured rate source. All are free and keyless; `kind` has exactly
+        three values and `broker` is not one of them.
+      properties:
+        key:      { type: string }
+        kind:     { type: string, enum: [fx, metal, crypto] }
+        endpoint: { type: string }
+        priority: { type: integer }
+        enabled:  { type: boolean }
+
+    FxRate:
+      type: object
+      properties:
+        as_of_date: { type: string, format: date }
+        base:       { type: string }
+        quote:      { type: string }
+        rate:
+          type: string
+          description: Decimal string, parsed into an exact rational. Never a float.
+        source:     { type: string }
+        fetched_at: { type: string, format: date-time }
+
+    Metric:
+      type: object
+      properties:
+        key:        { type: string }
+        label:      { type: string }
+        definition: { type: string }
+        is_builtin: { type: boolean }
