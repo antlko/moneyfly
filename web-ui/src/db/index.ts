@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 
+import { plain } from '@/lib/plain'
 import type { Entity, Op, Row } from '@/sync/types'
 
 /**
@@ -50,8 +51,16 @@ class MoneyflyDB extends Dexie {
     return row === undefined ? fallback : (row.value as T)
   }
 
+  /**
+   * Stored values are normalised here, not by the caller.
+   *
+   * Half the app's writes originate in a Pinia store, where the value on hand is
+   * a reactive proxy that structured clone refuses. Making every call site
+   * remember to unwrap it is a rule that gets forgotten exactly once and then
+   * fails at runtime, so the boundary does it.
+   */
   async setMeta(key: string, value: unknown): Promise<void> {
-    await this.meta.put({ key, value })
+    await this.meta.put({ key, value: plain(value) })
   }
 
   /**
