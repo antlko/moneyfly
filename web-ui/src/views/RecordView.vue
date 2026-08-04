@@ -10,6 +10,7 @@ import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import DateRow from '@/components/monefy/DateRow.vue'
 import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
+import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { display, initialState, press, total, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
 import { exponent, toMinor } from '@/lib/money'
@@ -76,7 +77,9 @@ function confirm() {
 }
 
 const account = computed(
-  () => taxonomy.activeAccounts.find((a) => a.currency === currency.value) ?? taxonomy.activeAccounts[0],
+  () =>
+    taxonomy.activeAccounts.find((a) => a.currency === currency.value) ??
+    taxonomy.activeAccounts[0],
 )
 
 async function record(category: Row) {
@@ -127,22 +130,18 @@ function back() {
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-2 pt-safe-t text-white">
-      <div class="flex h-14 items-center">
-        <button type="button" class="px-2 py-2 text-base" @click="back">
-          {{ step === 'category' ? 'Back' : 'Cancel' }}
-        </button>
-        <p class="flex-1 text-center text-lg font-semibold">{{ title }}</p>
+    <ScreenHeader :title="title" :on-back="back">
+      <template #actions>
         <button
           type="button"
-          class="px-2 py-2"
+          class="grid size-11 place-items-center"
           aria-label="Make recurring"
           @click="toast('Recurring records arrive in a later phase')"
         >
           <Repeat :size="22" :stroke-width="1.8" />
         </button>
-      </div>
-    </header>
+      </template>
+    </ScreenHeader>
 
     <DateRow v-model:day="day" />
 
@@ -165,7 +164,9 @@ function back() {
         />
       </label>
 
-      <div class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]">
+      <div
+        class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]"
+      >
         <AmountKeypad @press="key" />
         <div class="flex gap-2 px-3">
           <button
@@ -174,12 +175,7 @@ function back() {
             class="flex flex-1 items-center justify-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-base tracking-wide text-mf-green-dark uppercase disabled:opacity-40"
             @click="confirm"
           >
-            <CategoryIcon
-              v-if="chosen"
-              :icon="chosen.icon"
-              :color="chosen.color"
-              :size="22"
-            />
+            <CategoryIcon v-if="chosen" :icon="chosen.icon" :color="chosen.color" :size="22" />
             {{ chosen ? chosen.name : 'Choose category' }}
           </button>
           <button
@@ -196,22 +192,17 @@ function back() {
       </div>
     </template>
 
-    <div
-      v-else
-      class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]"
-    >
-      <CategoryGrid
-        :categories="categories"
-        @select="record"
-        @create="showNewCategory = true"
-      />
+    <div v-else class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]">
+      <CategoryGrid :categories="categories" @select="record" @create="showNewCategory = true" />
     </div>
 
-    <NewCategorySheet
-      v-if="showNewCategory"
-      :kind="kind"
-      @cancel="showNewCategory = false"
-      @create="createCategory"
-    />
+    <Transition name="mf-sheet">
+      <NewCategorySheet
+        v-if="showNewCategory"
+        :kind="kind"
+        @cancel="showNewCategory = false"
+        @create="createCategory"
+      />
+    </Transition>
   </div>
 </template>

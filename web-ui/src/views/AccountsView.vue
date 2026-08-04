@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Plus } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
 
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import MoneyAmount from '@/components/monefy/MoneyAmount.vue'
+import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { CATEGORY_COLORS, CATEGORY_ICONS, type CategoryColor } from '@/lib/categories'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { useAccountsStore } from '@/stores/accounts'
@@ -83,15 +83,13 @@ function closeForm() {
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-2 pt-safe-t text-white">
-      <div class="flex h-14 items-center gap-2 px-2">
-        <RouterLink to="/" class="text-sm">‹ Back</RouterLink>
-        <h1 class="flex-1 text-lg font-semibold">Accounts</h1>
+    <ScreenHeader title="Accounts">
+      <template #actions>
         <button type="button" aria-label="New account" class="p-2" @click="startCreate">
           <Plus :size="22" :stroke-width="2" />
         </button>
-      </div>
-    </header>
+      </template>
+    </ScreenHeader>
 
     <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]">
       <ul class="divide-y divide-mf-muted/25">
@@ -146,98 +144,109 @@ function closeForm() {
       </template>
     </main>
 
-    <div v-if="open" class="fixed inset-0 z-50 flex items-end bg-black/30" @click.self="closeForm">
-      <form
-        class="max-h-[85%] w-full space-y-4 overflow-y-auto rounded-t-2xl bg-mf-bg p-4 pb-[calc(1rem+var(--spacing-safe-b))]"
-        @submit.prevent="save"
+    <Transition name="mf-sheet">
+      <div
+        v-if="open"
+        class="fixed inset-0 z-50 flex items-end bg-black/30"
+        @click.self="closeForm"
       >
-        <h2 class="text-lg font-medium">{{ editing ? 'Edit account' : 'New account' }}</h2>
+        <form
+          class="max-h-[85%] w-full space-y-4 overflow-y-auto rounded-t-2xl bg-mf-bg p-4 pb-[calc(1rem+var(--spacing-safe-b))]"
+          @submit.prevent="save"
+        >
+          <h2 class="text-lg font-medium">{{ editing ? 'Edit account' : 'New account' }}</h2>
 
-        <input
-          v-model="form.name"
-          type="text"
-          placeholder="Name"
-          required
-          maxlength="40"
-          class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
-        />
+          <input
+            v-model="form.name"
+            type="text"
+            placeholder="Name"
+            required
+            maxlength="40"
+            class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
+          />
 
-        <div class="flex gap-3">
-          <label class="flex-1 text-sm">
-            <span class="mb-1 block text-mf-muted">Currency</span>
-            <input
-              v-model="form.currency"
-              type="text"
-              maxlength="3"
-              required
-              class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 uppercase outline-none focus:border-mf-green"
-            />
-          </label>
-          <label class="flex-1 text-sm">
-            <!--
+          <div class="flex gap-3">
+            <label class="flex-1 text-sm">
+              <span class="mb-1 block text-mf-muted">Currency</span>
+              <input
+                v-model="form.currency"
+                type="text"
+                maxlength="3"
+                required
+                class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 uppercase outline-none focus:border-mf-green"
+              />
+            </label>
+            <label class="flex-1 text-sm">
+              <!--
               An opening balance, not a running one. Everything after it is
               derived from the transactions — see docs/SYNC.md §2.
             -->
-            <span class="mb-1 block text-mf-muted">Opening balance</span>
-            <input
-              v-model="form.opening"
-              type="number"
-              :step="exponent(form.currency) === 0 ? '1' : '0.01'"
-              class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
-            />
-          </label>
-        </div>
-
-        <div>
-          <p class="mb-2 text-sm text-mf-muted">Colour</p>
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="option in CATEGORY_COLORS"
-              :key="option"
-              type="button"
-              class="h-8 w-8 rounded-full border-2"
-              :style="{
-                backgroundColor: `var(--color-cat-${option})`,
-                borderColor: form.color === option ? 'var(--color-mf-ink)' : 'transparent',
-              }"
-              :aria-label="option"
-              @click="form.color = option"
-            />
+              <span class="mb-1 block text-mf-muted">Opening balance</span>
+              <input
+                v-model="form.opening"
+                type="number"
+                :step="exponent(form.currency) === 0 ? '1' : '0.01'"
+                class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
+              />
+            </label>
           </div>
-        </div>
 
-        <div>
-          <p class="mb-2 text-sm text-mf-muted">Icon</p>
-          <div class="grid grid-cols-8 gap-2">
+          <div>
+            <p class="mb-2 text-sm text-mf-muted">Colour</p>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="option in CATEGORY_COLORS"
+                :key="option"
+                type="button"
+                class="h-8 w-8 rounded-full border-2"
+                :style="{
+                  backgroundColor: `var(--color-cat-${option})`,
+                  borderColor: form.color === option ? 'var(--color-mf-ink)' : 'transparent',
+                }"
+                :aria-label="option"
+                @click="form.color = option"
+              />
+            </div>
+          </div>
+
+          <div>
+            <p class="mb-2 text-sm text-mf-muted">Icon</p>
+            <div class="grid grid-cols-8 gap-2">
+              <button
+                v-for="option in iconNames"
+                :key="option"
+                type="button"
+                class="grid aspect-square place-items-center rounded-lg border"
+                :class="
+                  form.icon === option
+                    ? 'border-mf-green bg-mf-green-soft/30'
+                    : 'border-transparent'
+                "
+                :aria-label="option"
+                @click="form.icon = option"
+              >
+                <CategoryIcon :icon="option" :color="form.color" :size="22" />
+              </button>
+            </div>
+          </div>
+
+          <div class="flex gap-3 pt-1">
             <button
-              v-for="option in iconNames"
-              :key="option"
               type="button"
-              class="grid aspect-square place-items-center rounded-lg border"
-              :class="
-                form.icon === option ? 'border-mf-green bg-mf-green-soft/30' : 'border-transparent'
-              "
-              :aria-label="option"
-              @click="form.icon = option"
+              class="flex-1 rounded-full border border-mf-muted py-2.5"
+              @click="closeForm"
             >
-              <CategoryIcon :icon="option" :color="form.color" :size="22" />
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="flex-1 rounded-full bg-mf-green py-2.5 font-medium text-white"
+            >
+              Save
             </button>
           </div>
-        </div>
-
-        <div class="flex gap-3 pt-1">
-          <button
-            type="button"
-            class="flex-1 rounded-full border border-mf-muted py-2.5"
-            @click="closeForm"
-          >
-            Cancel
-          </button>
-          <button type="submit" class="flex-1 rounded-full bg-mf-green py-2.5 font-medium text-white">
-            Save
-          </button>
-        </div>
-      </form>
-    </div>
+        </form>
+      </div>
+    </Transition>
   </div>
 </template>

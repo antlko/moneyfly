@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 
 import * as http from '@/api/http'
+import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -72,12 +73,7 @@ const when = (unix: number) => (unix ? new Date(unix * 1000).toLocaleString() : 
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-4 pt-safe-t pb-3 text-white">
-      <div class="flex h-14 items-center gap-3">
-        <RouterLink to="/" class="text-sm">‹ Back</RouterLink>
-        <h1 class="text-lg font-semibold">Account</h1>
-      </div>
-    </header>
+    <ScreenHeader title="Account" />
 
     <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))]">
       <p v-if="message" class="rounded-lg bg-mf-green-soft/40 p-3 text-sm text-mf-green-dark">
@@ -165,12 +161,7 @@ const when = (unix: number) => (unix ? new Date(unix * 1000).toLocaleString() : 
               </p>
               <p class="text-xs text-mf-muted">Last seen {{ when(d.lastSeenAt) }}</p>
             </div>
-            <button
-              v-if="!d.current"
-              type="button"
-              class="text-mf-red-text"
-              @click="forget(d.id)"
-            >
+            <button v-if="!d.current" type="button" class="text-mf-red-text" @click="forget(d.id)">
               Forget
             </button>
           </li>

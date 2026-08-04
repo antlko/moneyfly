@@ -59,7 +59,10 @@ function onUp() {
   <div class="fixed inset-0 z-40 flex flex-col justify-end bg-black/30" @click.self="emit('close')">
     <section
       class="flex max-h-[80%] flex-col rounded-t-2xl bg-mf-bg shadow-2xl"
-      :style="{ transform: `translateY(${drag}px)`, transition: drag ? '' : 'transform 180ms ease' }"
+      :style="{
+        transform: `translateY(${drag}px)`,
+        transition: drag ? '' : 'transform 180ms ease',
+      }"
     >
       <header
         class="shrink-0 cursor-grab touch-none px-4 pt-2 pb-3"
@@ -99,7 +102,9 @@ function onUp() {
                 :minor="Number(row.amountMinor ?? 0)"
                 :currency="String(row.currency ?? currency)"
                 class="text-sm font-medium"
-                :class="Number(row.amountMinor ?? 0) < 0 ? 'text-mf-red-text' : 'text-mf-green-dark'"
+                :class="
+                  Number(row.amountMinor ?? 0) < 0 ? 'text-mf-red-text' : 'text-mf-green-dark'
+                "
               />
               <button
                 type="button"

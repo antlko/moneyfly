@@ -37,7 +37,11 @@ const received = ref('')
 
 const amount = computed(() => display(calc.value))
 const valid = computed(
-  () => total(calc.value) > 0 && fromId.value !== '' && toId.value !== '' && fromId.value !== toId.value,
+  () =>
+    total(calc.value) > 0 &&
+    fromId.value !== '' &&
+    toId.value !== '' &&
+    fromId.value !== toId.value,
 )
 
 const key = (pressed: Key) => {
@@ -105,7 +109,9 @@ function swap() {
       <div class="mx-3 space-y-2">
         <label class="block">
           <span class="mb-1 block text-xs text-mf-muted">From</span>
-          <div class="flex items-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 px-3 py-2">
+          <div
+            class="flex items-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 px-3 py-2"
+          >
             <CategoryIcon :icon="from?.icon" :color="from?.color" :size="24" />
             <select v-model="fromId" class="w-full bg-transparent outline-none">
               <option v-for="a in accounts" :key="a.id" :value="String(a.id)">
@@ -128,7 +134,9 @@ function swap() {
 
         <label class="block">
           <span class="mb-1 block text-xs text-mf-muted">To</span>
-          <div class="flex items-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 px-3 py-2">
+          <div
+            class="flex items-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 px-3 py-2"
+          >
             <CategoryIcon :icon="to?.icon" :color="to?.color" :size="24" />
             <select v-model="toId" class="w-full bg-transparent outline-none">
               <option v-for="a in accounts" :key="a.id" :value="String(a.id)">

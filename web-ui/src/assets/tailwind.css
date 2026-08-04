@@ -55,6 +55,15 @@
   /* The mobile shell is a fixed-height app frame, not a scrolling document. */
   --spacing-safe-b: env(safe-area-inset-bottom, 0px);
   --spacing-safe-t: env(safe-area-inset-top, 0px);
+
+  /*
+    One motion vocabulary. Every panel in the app enters and leaves with these
+    two values, so nothing reads as belonging to a different application. The
+    curve decelerates hard at the end, which is what makes a sheet look like it
+    settled rather than stopped.
+  */
+  --mf-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --mf-duration: 200ms;
 }
 
 @layer base {
@@ -80,5 +89,106 @@
   [role='button'] {
     touch-action: manipulation;
     cursor: pointer;
+  }
+}
+
+/*
+  Named Vue transitions, shared by every overlay.
+
+  These live here rather than in each component for a reason that only shows up
+  in use: a `v-if` alone cannot animate a *departure* — the element is gone
+  before any class could apply. So the `<Transition>` wraps the `v-if` at the
+  call site, and the component itself stays a plain panel. Putting the classes in
+  one place is what keeps the drawer, the sheet and the page from each inventing
+  their own timing.
+
+  The dimmed backdrop and the panel move together: fading the backdrop while the
+  panel slides is one gesture, and separating them looks like two things
+  happening for unrelated reasons.
+*/
+.mf-fade-enter-active,
+.mf-fade-leave-active,
+.mf-sheet-enter-active,
+.mf-sheet-leave-active,
+.mf-drawer-l-enter-active,
+.mf-drawer-l-leave-active,
+.mf-drawer-r-enter-active,
+.mf-drawer-r-leave-active,
+.mf-page-enter-active,
+.mf-page-leave-active {
+  transition:
+    opacity var(--mf-duration) var(--mf-ease),
+    transform var(--mf-duration) var(--mf-ease);
+}
+
+.mf-fade-enter-from,
+.mf-fade-leave-to {
+  opacity: 0;
+}
+
+/* The overlay fades; the panel inside it also travels. */
+.mf-sheet-enter-from,
+.mf-sheet-leave-to,
+.mf-drawer-l-enter-from,
+.mf-drawer-l-leave-to,
+.mf-drawer-r-enter-from,
+.mf-drawer-r-leave-to {
+  opacity: 0;
+}
+
+.mf-sheet-enter-from > *,
+.mf-sheet-leave-to > * {
+  transform: translateY(100%);
+}
+.mf-sheet-enter-active > *,
+.mf-sheet-leave-active > * {
+  transition: transform var(--mf-duration) var(--mf-ease);
+}
+
+.mf-drawer-l-enter-from > *,
+.mf-drawer-l-leave-to > * {
+  transform: translateX(-100%);
+}
+.mf-drawer-r-enter-from > *,
+.mf-drawer-r-leave-to > * {
+  transform: translateX(100%);
+}
+.mf-drawer-l-enter-active > *,
+.mf-drawer-l-leave-active > *,
+.mf-drawer-r-enter-active > *,
+.mf-drawer-r-leave-active > * {
+  transition: transform var(--mf-duration) var(--mf-ease);
+}
+
+/*
+  Route changes. Both screens are absolutely positioned during the swap,
+  otherwise the outgoing one still occupies the flow and the incoming one is
+  pushed below the fold for the length of the transition.
+*/
+.mf-page-enter-active,
+.mf-page-leave-active {
+  position: absolute;
+  inset: 0;
+}
+.mf-page-enter-from {
+  opacity: 0;
+  transform: translateY(1.5rem);
+}
+.mf-page-leave-to {
+  opacity: 0;
+}
+
+/*
+  Motion is decoration here — every transition above only restates a change the
+  layout already made. Honouring the preference costs nothing and removes the
+  whole category of complaint.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

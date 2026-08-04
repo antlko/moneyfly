@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
-
+import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
 import { sync } from '@/sync/engine'
@@ -47,13 +46,11 @@ const money = (minor: unknown) =>
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-4 pt-safe-t pb-3 text-white">
-      <div class="flex h-14 items-center gap-3">
-        <RouterLink to="/" class="text-sm">‹ Back</RouterLink>
-        <h1 class="text-lg font-semibold">Sync</h1>
-        <span class="ml-auto text-xs text-white/85">{{ syncStore.label }}</span>
-      </div>
-    </header>
+    <ScreenHeader title="Sync">
+      <template #actions>
+        <span class="px-3 text-xs text-white/85">{{ syncStore.label }}</span>
+      </template>
+    </ScreenHeader>
 
     <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(6rem+var(--spacing-safe-b))]">
       <section class="rounded-2xl bg-mf-surface p-4 text-sm">
@@ -95,12 +92,21 @@ const money = (minor: unknown) =>
             </p>
           </div>
           <span class="font-medium text-mf-red-text">{{ money(row.amountMinor) }}</span>
-          <button type="button" class="text-xs text-mf-green-dark" @click="rename(row)">edit</button>
-          <button type="button" class="text-xs text-mf-red-text" @click="sync.remove('txn', row.id)">
+          <button type="button" class="text-xs text-mf-green-dark" @click="rename(row)">
+            edit
+          </button>
+          <button
+            type="button"
+            class="text-xs text-mf-red-text"
+            @click="sync.remove('txn', row.id)"
+          >
             delete
           </button>
         </li>
-        <li v-if="!rows.length" class="rounded-xl bg-mf-surface px-4 py-6 text-center text-sm text-mf-muted">
+        <li
+          v-if="!rows.length"
+          class="rounded-xl bg-mf-surface px-4 py-6 text-center text-sm text-mf-muted"
+        >
           Nothing recorded yet.
         </li>
       </ul>

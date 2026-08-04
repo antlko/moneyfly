@@ -126,29 +126,35 @@ const todo = (what: string) => () => console.info(`${what} lands in a later phas
 
     <RecordFabs @expense="router.push('/new/expense')" @income="router.push('/new/income')" />
 
-    <RecordsSheet
-      v-if="showRecords"
-      :rows="dashboard.rows"
-      :currency="dashboard.baseCurrency"
-      :title="dashboard.label"
-      @close="showRecords = false"
-    />
+    <Transition name="mf-sheet">
+      <RecordsSheet
+        v-if="showRecords"
+        :rows="dashboard.rows"
+        :currency="dashboard.baseCurrency"
+        :title="dashboard.label"
+        @close="showRecords = false"
+      />
+    </Transition>
 
-    <FilterDrawer
-      v-if="showFilter"
-      :period="dashboard.period"
-      :account-label="dashboard.accountLabel"
-      :selected="dashboard.accountFilter"
-      :accounts="taxonomy.activeAccounts"
-      :currency="dashboard.baseCurrency"
-      @close="showFilter = false"
-      @kind="dashboard.setPeriodKind"
-      @interval="dashboard.setInterval"
-      @go-to-day="dashboard.goToDay"
-      @select-accounts="dashboard.setAccountFilter"
-      @manage-accounts="router.push('/accounts')"
-    />
+    <Transition name="mf-drawer-l">
+      <FilterDrawer
+        v-if="showFilter"
+        :period="dashboard.period"
+        :account-label="dashboard.accountLabel"
+        :selected="dashboard.accountFilter"
+        :accounts="taxonomy.activeAccounts"
+        :currency="dashboard.baseCurrency"
+        @close="showFilter = false"
+        @kind="dashboard.setPeriodKind"
+        @interval="dashboard.setInterval"
+        @go-to-day="dashboard.goToDay"
+        @select-accounts="dashboard.setAccountFilter"
+        @manage-accounts="router.push('/accounts')"
+      />
+    </Transition>
 
-    <MenuDrawer v-if="showMenu" @close="showMenu = false" @go="router.push($event)" />
+    <Transition name="mf-drawer-r">
+      <MenuDrawer v-if="showMenu" @close="showMenu = false" @go="router.push($event)" />
+    </Transition>
   </div>
 </template>
