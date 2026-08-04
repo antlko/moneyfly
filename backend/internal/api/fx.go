@@ -32,12 +32,31 @@ func buildRateProviders(cfg *config.Config, required []string) []fx.Provider {
 // rates returns the FX service over the current database.
 func (s *Server) rates() *fx.Service { return fx.NewService(s.conn().Rates()) }
 
-// fxLoop refreshes exchange rates once a day at `fx.refresh_at`.
+// minWakeInterval bounds how often a client-triggered wake-up may actually hit
+// a provider. Someone adding three currencies in a row should cost one fetch,
+// not three, and a device pushing in a loop must not be able to drive traffic to
+// someone else's free API.
+const minWakeInterval = time.Minute
+
+// wakeFX asks the refresh loop to look again, without blocking the caller.
 //
-// It is deliberately not a `time.Ticker(24h)`: a ticker drifts against the wall
-// clock across restarts and daylight saving, and "04:00" in the config would
-// gradually stop meaning 04:00. Each iteration computes the next occurrence
-// instead.
+// The channel is buffered by one and the send is non-blocking, so this is safe
+// to call from a request handler: at worst the signal is already pending, which
+// means a look is coming anyway.
+func (s *Server) wakeFX() {
+	select {
+	case s.fxWake <- struct{}{}:
+	default:
+	}
+}
+
+// fxLoop refreshes exchange rates once a day at `fx.refresh_at`, and whenever a
+// client does something that might have introduced a currency.
+//
+// The daily schedule is deliberately not a `time.Ticker(24h)`: a ticker drifts
+// against the wall clock across restarts and daylight saving, and "04:00" in the
+// config would gradually stop meaning 04:00. Each iteration computes the next
+// occurrence instead.
 //
 // A refresh on startup catches up an instance that was switched off overnight,
 // but only when today's rates are actually missing — restarting the container
@@ -55,18 +74,30 @@ func (s *Server) fxLoop() {
 		return
 	}
 
-	if s.ratesMissingToday() {
+	var lastRun time.Time
+	run := func() {
 		s.refreshRates()
+		lastRun = time.Now()
+	}
+
+	if s.ratesMissingToday() {
+		run()
 	}
 	for {
-		wait := time.Until(nextOccurrence(time.Now(), hour, minute))
-		t := time.NewTimer(wait)
+		timer := time.NewTimer(time.Until(nextOccurrence(time.Now(), hour, minute)))
 		select {
 		case <-s.stop:
-			t.Stop()
+			timer.Stop()
 			return
-		case <-t.C:
-			s.refreshRates()
+		case <-timer.C:
+			run()
+		case <-s.fxWake:
+			timer.Stop()
+			// Only when there is genuinely something new to fetch, and not more
+			// often than minWakeInterval.
+			if time.Since(lastRun) >= minWakeInterval && s.ratesMissingToday() {
+				run()
+			}
 		}
 	}
 }

@@ -30,7 +30,11 @@ class FakeServer implements Transport {
     if (!this.online) throw new TypeError('Failed to fetch')
   }
 
+  /** Lets a test make push fail in a specific way. */
+  pushImpl: (() => never) | null = null
+
   async push(_deviceId: string, ops: Op[]) {
+    if (this.pushImpl) this.pushImpl()
     this.assertOnline()
     let accepted = 0
     for (const op of ops) {
@@ -251,6 +255,42 @@ describe('SyncEngine', () => {
     const reused = new SyncEngine(a.replica, 'dev-a', new FakeServer())
     await reused.start('user-2')
     expect(await live(reused)).toHaveLength(0)
+  })
+
+  /*
+   * "Offline" has to mean the network, and nothing else.
+   *
+   * The check used to be `!(e instanceof ApiError)` — anything that was not an
+   * HTTP response was blamed on the connection. That swept up every local
+   * failure and reported it as offline while the server was answering 200,
+   * which sends you to check a connection that was never the problem.
+   */
+  it('reports a local failure as an error, not as offline', async () => {
+    const a = newDevice(server, 'dev-a')
+    await a.start('user-1')
+
+    const broken = new Error('IndexedDB transaction aborted')
+    server.pushImpl = () => {
+      throw broken
+    }
+    await a.write('txn', expense('one'))
+    await settle(a)
+
+    expect(a.state.value).toBe('error')
+    expect(a.error.value).toBe('IndexedDB transaction aborted')
+  })
+
+  it('still calls a transport failure offline', async () => {
+    const a = newDevice(server, 'dev-a')
+    await a.start('user-1')
+
+    server.pushImpl = () => {
+      throw new TypeError('Failed to fetch')
+    }
+    await a.write('txn', expense('one'))
+    await settle(a)
+
+    expect(a.state.value).toBe('offline')
   })
 
   it('reports pending work while offline', async () => {

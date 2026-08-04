@@ -85,10 +85,15 @@ class MoneyflyDB extends Dexie {
    * Used when a different account signs in on this browser: the previous user's
    * rows must not linger, and the cursor certainly must not — it indexes someone
    * else's change log.
+   *
+   * `fx_rate` survives, because it is nobody's data: it is a public dataset this
+   * device happens to have cached, it reveals nothing about the account that
+   * fetched it, and throwing it away would leave the next person unable to
+   * convert anything until they next reached the network.
    */
   async reset(): Promise<void> {
     await this.transaction('rw', this.tables, async () => {
-      await Promise.all(this.tables.map((t) => t.clear()))
+      await Promise.all(this.tables.filter((t) => t.name !== 'fx_rate').map((t) => t.clear()))
     })
   }
 }

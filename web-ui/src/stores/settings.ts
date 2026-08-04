@@ -38,4 +38,13 @@ export const SETTING = {
   sort: 'view.sort',
   /** Account ids the dashboard is limited to. Empty means all of them. */
   accounts: 'filter.accounts',
+  /**
+   * Currency codes this person has turned on.
+   *
+   * Declared rather than inferred. Deriving the list from the accounts that
+   * already exist is circular — you cannot open a forint account until forint
+   * is a currency, and forint only became one because an account used it. It is
+   * a synced setting so adding a currency on the phone offers it on the laptop.
+   */
+  currencies: 'currency.enabled',
 } as const

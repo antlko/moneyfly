@@ -141,13 +141,22 @@ func (r *FxRepo) Latest(ctx context.Context, base string) ([]fx.Rate, error) {
 	return out, rows.Err()
 }
 
-// UsedCurrencies lists every currency code that appears anywhere in the
-// instance's data — account currencies, transaction currencies (including the
-// receiving side of a cross-currency transfer) and users' base currencies.
+// CurrencySetting is the `user_setting` row id holding the currencies a person
+// has turned on. It must match SETTING.currencies in web-ui/src/stores/settings.ts.
+const CurrencySetting = "currency.enabled"
+
+// UsedCurrencies lists every currency code this instance needs a rate for:
+// account currencies, transaction currencies (including the receiving side of a
+// cross-currency transfer), users' base currencies, and the currencies people
+// have explicitly turned on.
 //
-// This is what the refresher requires a provider to publish. Hardcoding a list
-// would be one person's currencies; deriving it means adding a forint account is
-// what makes the instance start insisting on a forint rate.
+// That last source is what makes the feature usable. Deriving the list purely
+// from existing rows is circular — a currency could only start updating after
+// something already used it, and nothing could use it until it updated — so
+// turning one on in the UI has to be enough on its own.
+//
+// This is also what the refresher requires a provider to publish. Hardcoding a
+// list would be one person's currencies.
 func (d *DB) UsedCurrencies(ctx context.Context) ([]string, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT DISTINCT currency FROM account WHERE deleted = 0 AND currency IS NOT NULL
@@ -155,7 +164,10 @@ func (d *DB) UsedCurrencies(ctx context.Context) ([]string, error) {
 		UNION SELECT DISTINCT json_extract(data, '$.toCurrency') FROM txn
 			WHERE deleted = 0 AND json_extract(data, '$.toCurrency') IS NOT NULL
 		UNION SELECT DISTINCT base_currency FROM users
-		ORDER BY 1`)
+		UNION SELECT DISTINCT chosen.value
+			FROM user_setting, json_each(json_extract(user_setting.data, '$.value')) AS chosen
+			WHERE user_setting.id = ? AND user_setting.deleted = 0
+		ORDER BY 1`, CurrencySetting)
 	if err != nil {
 		return nil, fmt.Errorf("db: reading used currencies: %w", err)
 	}

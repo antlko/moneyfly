@@ -109,34 +109,26 @@ export const useFxStore = defineStore('fx', () => {
   })
 
   /**
-   * Pull the rates this replica actually needs.
+   * Pull the rates this replica needs.
    *
-   * Which currencies those are is read from the local data, not configured: the
-   * set of currencies on accounts and transactions is exactly the set that has
-   * to be convertible. The range starts at the oldest record, so a month opened
-   * six months from now is still priced with its own rate.
+   * The quote list is the currencies the person has **declared**, plus anything
+   * their data already mentions. Declaring is what breaks the circle: inferring
+   * the list purely from existing accounts meant a currency could only become
+   * available after something already used it, and nothing could use it first.
    *
-   * Failure is not propagated. The app converts from whatever is cached and the
-   * screens carry on; that is the entire point of caching them.
+   * The range starts at the oldest record, so a month opened six months from now
+   * is still priced with its own rate.
+   *
+   * Failure is recorded, not thrown. The app converts from whatever is cached
+   * and the screens carry on; that is the entire point of caching them.
    */
-  async function refresh(baseCurrency: string): Promise<void> {
+  async function refresh(baseCurrency: string, declared: string[] = []): Promise<void> {
     if (refreshing.value) return
     refreshing.value = true
     try {
-      const { quotes, from } = await needed(baseCurrency)
+      const { quotes, from } = await needed(baseCurrency, declared)
       const to = today()
-      for (const quote of quotes) {
-        const { rates } = await http.fxHistory(quote, from, to)
-        await db.fx_rate.bulkPut(
-          rates.map((r) => ({
-            key: rateKey(r.quote, r.asOf),
-            quote: r.quote,
-            asOf: r.asOf,
-            rate: r.rate,
-            source: r.source,
-          })),
-        )
-      }
+      for (const quote of quotes) await pullQuote(quote, from, to)
       lastError.value = null
     } catch (e) {
       lastError.value = e instanceof Error ? e.message : String(e)
@@ -145,11 +137,67 @@ export const useFxStore = defineStore('fx', () => {
     }
   }
 
-  return { rateOn, convert, canConvert, latest, refresh, refreshing, lastError }
+  /**
+   * Fetch one currency, waiting for the server to have it.
+   *
+   * Turning a currency on is the first moment anyone has ever asked about it, so
+   * the server has to go and fetch it — which takes a second or two of talking to
+   * a rate provider. Asking once lands in that gap and reports "no rate yet" for
+   * a currency that is about to be perfectly fine, which reads as the feature
+   * being broken.
+   *
+   * So this retries, briefly and a bounded number of times, and gives up quietly:
+   * the daily refresh will have it by tomorrow regardless, and a screen that
+   * spins forever would be worse than one that says "no rate yet".
+   */
+  async function addQuote(quote: string, baseCurrency: string): Promise<boolean> {
+    if (quote === STORAGE_BASE || quote === baseCurrency) return true
+    refreshing.value = true
+    try {
+      const to = today()
+      const from = daysAgo(MAX_HISTORY_DAYS)
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (attempt > 0) await sleep(1200)
+        if (await pullQuote(quote, from, to)) {
+          lastError.value = null
+          return true
+        }
+      }
+      return false
+    } catch (e) {
+      lastError.value = e instanceof Error ? e.message : String(e)
+      return false
+    } finally {
+      refreshing.value = false
+    }
+  }
+
+  /** Store one quote's history. Returns whether the server had anything. */
+  async function pullQuote(quote: string, from: string, to: string): Promise<boolean> {
+    const { rates } = await http.fxHistory(quote, from, to)
+    if (rates.length === 0) return false
+    await db.fx_rate.bulkPut(
+      rates.map((r) => ({
+        key: rateKey(r.quote, r.asOf),
+        quote: r.quote,
+        asOf: r.asOf,
+        rate: r.rate,
+        source: r.source,
+      })),
+    )
+    return true
+  }
+
+  return { rateOn, convert, canConvert, latest, refresh, addQuote, refreshing, lastError }
 })
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 /** The quotes this replica needs, and how far back. */
-async function needed(baseCurrency: string): Promise<{ quotes: string[]; from: string }> {
+async function needed(
+  baseCurrency: string,
+  declared: string[],
+): Promise<{ quotes: string[]; from: string }> {
   const [accounts, txns] = await Promise.all([
     db.account.where('deleted').equals(0).toArray(),
     db.txn.where('deleted').equals(0).toArray(),
@@ -162,6 +210,7 @@ async function needed(baseCurrency: string): Promise<{ quotes: string[]; from: s
     if (value.length === 3 && value !== STORAGE_BASE) quotes.add(value)
   }
   add(baseCurrency)
+  for (const code of declared) add(code)
   for (const a of accounts) add(a.currency)
   for (const t of txns) {
     add(t.currency)

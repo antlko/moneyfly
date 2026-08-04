@@ -60,6 +60,12 @@ func (s *Server) handlePush(c fiber.Ctx) error {
 	// lost every comparison changes nothing and must not cause a pull storm.
 	if res.Accepted > 0 {
 		s.events.publish(user.ID, syncEvent{Seq: res.ServerSeq, DeviceID: in.DeviceID})
+		// Turning on a currency, or opening an account in one, arrives here.
+		// Without this the daily timer is the only thing that notices, so a
+		// currency added at lunchtime has no rate until tomorrow morning — which
+		// looks exactly like the feature not working. The wake-up is a
+		// non-blocking signal; no provider is ever called from a request.
+		s.wakeFX()
 	}
 
 	return c.JSON(pushResponse{

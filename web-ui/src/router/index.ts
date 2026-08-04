@@ -54,7 +54,11 @@ const router = createRouter({
       component: () => import('@/views/CurrenciesView.vue'),
     },
     {
-      path: '/debug/sync',
+      // `/sync` is the user-facing name — the dashboard's status line points at
+      // it, so "Offline" has somewhere to lead. `/debug/sync` is the old path
+      // and still works; it additionally shows the row-level debug tools.
+      path: '/sync',
+      alias: '/debug/sync',
       name: 'sync-debug',
       component: () => import('@/views/SyncDebugView.vue'),
     },

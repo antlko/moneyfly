@@ -15,6 +15,7 @@ import RecordsSheet from '@/components/monefy/RecordsSheet.vue'
 import SwipePager from '@/components/monefy/SwipePager.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'
+import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useSyncStore } from '@/stores/sync'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import type { Row } from '@/sync/types'
@@ -22,6 +23,7 @@ import type { Row } from '@/sync/types'
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
 const fx = useFxStore()
+const settings = useSettingsStore()
 const syncStore = useSyncStore()
 const router = useRouter()
 
@@ -47,9 +49,11 @@ watch(
  * request per foreign currency actually in use, and none at all for someone
  * with a single currency.
  */
-onMounted(() => void fx.refresh(dashboard.baseCurrency))
+const declaredCurrencies = () => settings.get<string[]>(SETTING.currencies, [])
+
+onMounted(() => void fx.refresh(dashboard.baseCurrency, declaredCurrencies()))
 useEventListener(document, 'visibilitychange', () => {
-  if (!document.hidden) void fx.refresh(dashboard.baseCurrency)
+  if (!document.hidden) void fx.refresh(dashboard.baseCurrency, declaredCurrencies())
 })
 
 /**
@@ -140,13 +144,6 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
       @toggle-sort="dashboard.toggleSort"
       @open="showRecords = true"
     />
-
-    <p
-      v-if="syncStore.pending || syncStore.state === 'offline'"
-      class="shrink-0 pt-1 text-center text-xs text-mf-muted"
-    >
-      {{ syncStore.label }}
-    </p>
 
     <RecordFabs @expense="router.push('/new/expense')" @income="router.push('/new/income')" />
 

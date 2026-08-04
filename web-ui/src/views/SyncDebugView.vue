@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
@@ -17,6 +20,12 @@ import { useSyncStore } from '@/stores/sync'
  * actually holds.
  */
 const syncStore = useSyncStore()
+
+// The row-level tools are for proving convergence by hand, not for anyone
+// looking up why the dashboard said "Offline". They stay on the old path.
+// `useRoute` has to be called here, in setup, not inside the computed.
+const route = useRoute()
+const debug = computed(() => route.path.startsWith('/debug'))
 
 const rows = useLiveQuery<Row[]>(
   () => db.txn.where('deleted').equals(0).reverse().sortBy('occurredOn'),
@@ -46,13 +55,26 @@ const money = (minor: unknown) =>
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <ScreenHeader title="Sync">
-      <template #actions>
-        <span class="px-3 text-xs text-white/85">{{ syncStore.label }}</span>
-      </template>
-    </ScreenHeader>
+    <ScreenHeader title="Sync" />
 
     <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(6rem+var(--spacing-safe-b))]">
+      <!--
+        What the dashboard's status line leads to. Someone arriving here has just
+        been told "Offline" and wants to know whether that costs them anything.
+        It does not, and saying so plainly is the whole point of the screen.
+      -->
+      <section class="rounded-2xl bg-mf-surface p-4">
+        <p class="text-lg font-medium">{{ syncStore.detail }}</p>
+        <p class="mt-2 text-sm text-mf-muted">
+          Everything you record is written to this device first and shown straight away, then sent
+          to the server in the background. Nothing is ever waiting on the network, so an interrupted
+          connection costs you nothing but a delay — the queue is sent as soon as one returns.
+        </p>
+        <p v-if="syncStore.lastSyncAt" class="mt-2 text-sm text-mf-muted">
+          Last exchanged with the server {{ new Date(syncStore.lastSyncAt).toLocaleTimeString() }}.
+        </p>
+      </section>
+
       <section class="rounded-2xl bg-mf-surface p-4 text-sm">
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
           <dt class="text-mf-muted">state</dt>
@@ -78,7 +100,7 @@ const money = (minor: unknown) =>
         </button>
       </section>
 
-      <ul class="space-y-2">
+      <ul v-if="debug" class="space-y-2">
         <li
           v-for="row in rows"
           :key="row.id"
@@ -113,6 +135,7 @@ const money = (minor: unknown) =>
     </main>
 
     <footer
+      v-if="debug"
       class="fixed inset-x-0 bottom-0 flex justify-center px-6 pt-2 pb-[calc(1rem+var(--spacing-safe-b))]"
     >
       <button

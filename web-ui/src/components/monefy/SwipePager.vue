@@ -100,10 +100,22 @@ function onPointerMove(e: PointerEvent) {
 
 async function onPointerUp(e: PointerEvent) {
   if (!tracking(e)) return
-  releaseCapture(e)
 
+  // Read and clear the gesture BEFORE releasing capture, and in that order.
+  //
+  // `releasePointerCapture` fires `lostpointercapture`, which Chrome dispatches
+  // synchronously from inside that call — so releasing first re-entered
+  // `onPointerCancel`, which reset `axis` and sprang the content back, and by
+  // the time control returned here `wasDrag` was already false. The effect was a
+  // pager that never changed period on a real pointer, while every synthetic
+  // drag in a test still passed, because synthetic events never take capture.
+  //
+  // Clearing `activePointer` first makes the re-entry a no-op whichever order
+  // the browser chooses, so this no longer depends on that detail at all.
   const wasDrag = axis === 'x'
   reset()
+  releaseCapture(e)
+
   if (!wasDrag || busy.value || props.disabled) return
 
   const dx = e.clientX - startX
@@ -119,9 +131,9 @@ async function onPointerUp(e: PointerEvent) {
 /** Abandon the gesture and spring back — cancellation, or a button let go. */
 function onPointerCancel(e: PointerEvent) {
   if (!tracking(e)) return
-  releaseCapture(e)
   const wasDrag = axis === 'x'
   reset()
+  releaseCapture(e)
   if (wasDrag) void animateTo(0)
 }
 

@@ -1,35 +1,93 @@
 <script setup lang="ts">
-import { RefreshCw } from '@lucide/vue'
-import { computed, onMounted } from 'vue'
+import { Plus, RefreshCw, X } from '@lucide/vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { toast } from 'vue-sonner'
 
+import CurrencySheet from '@/components/monefy/CurrencySheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
-import { STORAGE_BASE } from '@/lib/fx'
+import { currencyName } from '@/lib/currencies'
+import { STORAGE_BASE, type Ratio } from '@/lib/fx'
 import { exponent } from '@/lib/money'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'
+import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
+const settings = useSettingsStore()
 const fx = useFxStore()
 
-onMounted(() => void fx.refresh(dashboard.baseCurrency))
+const showPicker = ref(false)
 
-/** The currencies this replica actually uses — the ones worth having a rate for. */
-const inUse = computed(() => {
-  const codes = new Set<string>([dashboard.baseCurrency])
+/**
+ * The currencies this person has turned on.
+ *
+ * A synced setting, so the list follows them between devices. The base currency
+ * is always in it — everything is quoted in that, so it cannot be turned off.
+ */
+const declared = computed<string[]>(() => settings.get(SETTING.currencies, []))
+const enabled = computed(() => {
+  const codes = new Set<string>([dashboard.baseCurrency, ...declared.value])
+  // Anything already in the data belongs on the list whether it was declared or
+  // not, otherwise an account imported from another device would show a currency
+  // this screen claims is off.
   for (const a of taxonomy.activeAccounts) codes.add(String(a.currency ?? ''))
   return [...codes].filter((c) => c.length === 3).sort()
 })
 
+/**
+ * Turn a currency on and wait for its rate.
+ *
+ * The setting is pushed first: that is what tells the server this currency now
+ * matters, and the server goes and fetches it. `addQuote` then waits for that to
+ * land rather than asking once and reporting "no rate yet" for a currency that
+ * is seconds away from having one.
+ */
+async function add(code: string) {
+  showPicker.value = false
+  if (enabled.value.includes(code)) return
+  await settings.set(SETTING.currencies, [...declared.value, code].sort())
+  if (!(await fx.addQuote(code, dashboard.baseCurrency))) {
+    toast(`No rate for ${code} yet — it will arrive with the next update`)
+  }
+}
+
+/**
+ * Turning a currency off only removes it from the list of offers.
+ *
+ * Records already in it keep their currency and keep converting — deleting a
+ * currency out from under existing money would be a data-loss button dressed as
+ * a preference.
+ */
+async function remove(code: string) {
+  if (code === dashboard.baseCurrency) return
+  if (taxonomy.activeAccounts.some((a) => String(a.currency) === code)) {
+    toast(`${code} is in use by an account`)
+    return
+  }
+  await settings.set(
+    SETTING.currencies,
+    declared.value.filter((c) => c !== code),
+  )
+}
+
+onMounted(() => void fx.refresh(dashboard.baseCurrency, enabled.value))
+// A currency arriving by sync from another device should fetch its rate here
+// too, without waiting for the next visit. `add` does its own waiting fetch, so
+// this only has to cover arrivals it did not initiate.
+watch(enabled, (codes) => void fx.refresh(dashboard.baseCurrency, codes))
+
 /** A rate rendered the way a person reads it: 1 EUR = 363.94 HUF. */
-const asDecimal = (rate: { num: bigint; den: bigint }) =>
+const asDecimal = (rate: Ratio) =>
   (Number(rate.num) / Number(rate.den)).toLocaleString(undefined, { maximumFractionDigits: 4 })
+
+const rateFor = (code: string) => fx.latest.find((r) => r.quote === code)
 
 /**
  * How stale is too stale. Rates do not move at weekends, so a couple of days is
- * normal; a week means the refresh has been failing and nobody noticed, which
- * is the failure this screen exists to surface.
+ * normal; a week means the refresh has been failing and nobody noticed, which is
+ * the failure this screen exists to surface.
  */
 const STALE_AFTER_DAYS = 5
 </script>
@@ -43,9 +101,17 @@ const STALE_AFTER_DAYS = 5
           class="grid size-11 place-items-center"
           aria-label="Refresh rates"
           :disabled="fx.refreshing"
-          @click="fx.refresh(dashboard.baseCurrency)"
+          @click="fx.refresh(dashboard.baseCurrency, enabled)"
         >
           <RefreshCw :size="20" :stroke-width="2" :class="fx.refreshing && 'animate-spin'" />
+        </button>
+        <button
+          type="button"
+          class="grid size-11 place-items-center"
+          aria-label="Add a currency"
+          @click="showPicker = true"
+        >
+          <Plus :size="22" :stroke-width="2" />
         </button>
       </template>
     </ScreenHeader>
@@ -55,61 +121,83 @@ const STALE_AFTER_DAYS = 5
         <h2 class="mb-1 font-medium">Base currency</h2>
         <p class="text-2xl">{{ dashboard.baseCurrency }}</p>
         <p class="mt-2 text-sm text-mf-muted">
-          Every total on the dashboard is shown in this currency. Records keep the currency of the
-          account that paid for them, and are converted at the rate on the day they happened.
+          Every total is shown in this currency. A record keeps the currency of the account that
+          paid for it and is converted at the rate on the day it happened.
         </p>
       </section>
 
-      <section class="rounded-2xl bg-mf-surface p-4">
-        <h2 class="mb-2 font-medium">In use</h2>
-        <ul class="space-y-1 text-sm">
-          <li v-for="code in inUse" :key="code" class="flex justify-between">
-            <span>{{ code }}</span>
-            <span class="text-mf-muted">
-              {{ exponent(code) }} decimal{{ exponent(code) === 1 ? '' : 's' }}
-            </span>
+      <section class="rounded-2xl bg-mf-surface">
+        <div class="flex items-baseline justify-between p-4 pb-2">
+          <h2 class="font-medium">Your currencies</h2>
+          <span class="text-xs text-mf-muted">1 {{ STORAGE_BASE }} =</span>
+        </div>
+
+        <ul class="divide-y divide-mf-muted/20">
+          <li v-for="code in enabled" :key="code" class="flex items-center gap-3 px-4 py-3">
+            <div class="min-w-0 flex-1">
+              <p class="flex items-baseline gap-2">
+                <span class="font-medium">{{ code }}</span>
+                <span class="truncate text-sm text-mf-muted">{{ currencyName(code) }}</span>
+              </p>
+              <p class="text-xs text-mf-muted">
+                {{ exponent(code) }} decimal{{ exponent(code) === 1 ? '' : 's' }}
+              </p>
+            </div>
+
+            <div v-if="code === dashboard.baseCurrency" class="shrink-0 text-sm text-mf-muted">
+              base
+            </div>
+            <div v-else-if="rateFor(code)" class="shrink-0 text-right">
+              <p class="text-sm">{{ asDecimal(rateFor(code)!.rate) }}</p>
+              <!--
+                The age is the point. A dead provider raises no error anywhere —
+                it just stops moving, and every total quietly keeps using an old
+                number.
+              -->
+              <p
+                class="text-xs"
+                :class="
+                  rateFor(code)!.ageDays >= STALE_AFTER_DAYS ? 'text-mf-red-text' : 'text-mf-muted'
+                "
+              >
+                {{ rateFor(code)!.ageDays === 0 ? 'today' : `${rateFor(code)!.ageDays}d old` }}
+              </p>
+            </div>
+            <div v-else class="shrink-0 text-right text-xs text-mf-muted">
+              {{ fx.refreshing ? 'fetching…' : 'no rate yet' }}
+            </div>
+
+            <button
+              v-if="code !== dashboard.baseCurrency"
+              type="button"
+              class="grid size-8 shrink-0 place-items-center rounded-full text-mf-muted"
+              :aria-label="`Remove ${code}`"
+              @click="remove(code)"
+            >
+              <X :size="18" :stroke-width="2" />
+            </button>
           </li>
         </ul>
+
+        <p class="px-4 pt-2 pb-4 text-sm text-mf-muted">
+          Adding a currency here is what makes it available when you create an account, and what
+          starts its rate updating daily.
+        </p>
       </section>
 
-      <section class="rounded-2xl bg-mf-surface p-4">
-        <h2 class="mb-1 font-medium">Rates</h2>
-        <p class="mb-3 text-sm text-mf-muted">
-          Stored against {{ STORAGE_BASE }} and cached on this device, so conversion works offline.
-        </p>
-
-        <p v-if="fx.lastError" class="mb-3 text-sm text-mf-red-text">
-          Could not reach the server: {{ fx.lastError }}. The rates below are what this device
-          already had.
-        </p>
-
-        <ul class="space-y-2 text-sm">
-          <li
-            v-for="r in fx.latest"
-            :key="r.quote"
-            class="flex items-baseline justify-between gap-3"
-          >
-            <span class="shrink-0"
-              >1 {{ STORAGE_BASE }} = {{ asDecimal(r.rate) }} {{ r.quote }}</span
-            >
-            <!--
-              The age is the point of this list. A dead provider does not throw
-              an error anywhere — it just stops moving, and every total quietly
-              keeps using last month's number.
-            -->
-            <span
-              class="shrink-0 text-xs"
-              :class="r.ageDays >= STALE_AFTER_DAYS ? 'text-mf-red-text' : 'text-mf-muted'"
-            >
-              {{ r.ageDays === 0 ? 'today' : `${r.ageDays}d old` }}
-            </span>
-          </li>
-          <li v-if="!fx.latest.length" class="py-4 text-center text-mf-muted">
-            No rates cached yet. They arrive the first time this device is online with a
-            foreign-currency account or record.
-          </li>
-        </ul>
-      </section>
+      <p v-if="fx.lastError" class="rounded-2xl bg-mf-red/15 p-4 text-sm text-mf-red-text">
+        Could not reach the server: {{ fx.lastError }}. Anything below is what this device already
+        had, and conversion carries on using it.
+      </p>
     </main>
+
+    <Transition name="mf-sheet">
+      <CurrencySheet
+        v-if="showPicker"
+        :enabled="enabled"
+        @select="add"
+        @close="showPicker = false"
+      />
+    </Transition>
   </div>
 </template>

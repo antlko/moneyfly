@@ -2,22 +2,49 @@
 import { Plus } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
+import { useRouter } from 'vue-router'
+
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import MoneyAmount from '@/components/monefy/MoneyAmount.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { CATEGORY_COLORS, CATEGORY_ICONS, type CategoryColor } from '@/lib/categories'
+import { currencyName } from '@/lib/currencies'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { useAccountsStore } from '@/stores/accounts'
 import { useDashboardStore } from '@/stores/dashboard'
+import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import type { Row } from '@/sync/types'
 
 const accounts = useAccountsStore()
 const taxonomy = useTaxonomyStore()
 const dashboard = useDashboardStore()
+const settings = useSettingsStore()
+const router = useRouter()
 
 const editing = ref<Row | null>(null)
 const creating = ref(false)
+
+/**
+ * The currencies on offer, declared on the Currencies screen.
+ *
+ * A free-text field here was wrong in both directions: it accepted "eu" or
+ * "dollars" as a currency, and it was the only way to introduce one — so the
+ * rate machinery could not know a currency existed until an account already
+ * used it. Declaring currencies in one place and choosing from that list here
+ * settles both.
+ */
+const currencyOptions = computed(() => {
+  const codes = new Set<string>([
+    dashboard.baseCurrency,
+    ...settings.get<string[]>(SETTING.currencies, []),
+  ])
+  // Whatever the account being edited already uses stays selectable even if it
+  // has since been turned off, or saving the form would silently re-denominate
+  // existing money.
+  if (editing.value) codes.add(String(editing.value.currency ?? ''))
+  return [...codes].filter((c) => c.length === 3).sort()
+})
 
 const form = ref({
   name: '',
@@ -168,13 +195,22 @@ function closeForm() {
           <div class="flex gap-3">
             <label class="flex-1 text-sm">
               <span class="mb-1 block text-mf-muted">Currency</span>
-              <input
+              <select
                 v-model="form.currency"
-                type="text"
-                maxlength="3"
                 required
-                class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 uppercase outline-none focus:border-mf-green"
-              />
+                class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
+              >
+                <option v-for="code in currencyOptions" :key="code" :value="code">
+                  {{ code }} · {{ currencyName(code) }}
+                </option>
+              </select>
+              <button
+                type="button"
+                class="mt-1 text-xs text-mf-green-dark"
+                @click="router.push('/currencies')"
+              >
+                Add a currency…
+              </button>
             </label>
             <label class="flex-1 text-sm">
               <!--

@@ -162,14 +162,18 @@ func TestUsedCurrencies(t *testing.T) {
 	applyRow(t, d, user.ID, "txn", "txn-1",
 		`{"kind":"transfer","occurredOn":"2026-08-01","amountMinor":-100,"currency":"EUR",`+
 			`"toAmountMinor":4200,"toCurrency":"UAH"}`)
+	// A currency turned on in the UI but not yet used by anything. Without this
+	// source the feature is circular: nothing can use a currency until its rate
+	// exists, and its rate never starts because nothing uses it.
+	applyRow(t, d, user.ID, "user_setting", CurrencySetting, `{"value":["PLN","HUF"]}`)
 
 	got, err := d.UsedCurrencies(ctx)
 	if err != nil {
 		t.Fatalf("UsedCurrencies: %v", err)
 	}
 	// EUR is excluded: it is the storage base, so there is no EUR->EUR rate to
-	// demand of anyone.
-	want := map[string]bool{"HUF": true, "UAH": true}
+	// demand of anyone. PLN is included on the strength of the setting alone.
+	want := map[string]bool{"HUF": true, "UAH": true, "PLN": true}
 	if len(got) != len(want) {
 		t.Fatalf("UsedCurrencies = %v, want %v", got, want)
 	}

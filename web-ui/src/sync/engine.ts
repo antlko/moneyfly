@@ -21,6 +21,15 @@ export type SyncState = 'idle' | 'syncing' | 'offline' | 'error'
 
 /** How often to sync when nothing else prompts it. */
 const POLL_INTERVAL_MS = 30_000
+
+/**
+ * Tables a bootstrap must not clear.
+ *
+ * `outbox` holds work the server has never seen. `meta` holds the cursor and
+ * clock. `fx_rate` is not synced data at all — see docs/ARCHITECTURE.md §4b —
+ * so a snapshot neither contains it nor can replace it.
+ */
+const KEPT_ON_BOOTSTRAP = new Set(['outbox', 'meta', 'fx_rate'])
 /** How many pending ops go in one push. */
 const PUSH_BATCH = 500
 
@@ -246,8 +255,11 @@ export class SyncEngine {
       if (isNetworkError(e)) {
         this.state.value = 'offline'
       } else {
+        // Something on this device failed. Say so, and log it — a sync error
+        // that only ever surfaces as a word in the header is undebuggable.
         this.state.value = 'error'
         this.error.value = e instanceof Error ? e.message : String(e)
+        console.error('sync: local failure', e)
       }
     } finally {
       await this.refreshPending()
@@ -315,9 +327,12 @@ export class SyncEngine {
     await this.db.transaction('rw', this.db.tables, async () => {
       // Clear the rows but keep the outbox: work written offline has not reached
       // the server yet, so it is not in the snapshot and dropping it would lose
-      // it outright.
+      // it outright. `fx_rate` is kept for a different reason — it is not a
+      // replica of synced rows at all, so a snapshot has nothing to say about
+      // it, and wiping it would throw away the only thing that lets an offline
+      // device convert currencies.
       for (const t of this.db.tables) {
-        if (t.name !== 'outbox' && t.name !== 'meta') await t.clear()
+        if (!KEPT_ON_BOOTSTRAP.has(t.name)) await t.clear()
       }
     })
 
@@ -425,9 +440,26 @@ function bodyOf(row: Row): Record<string, unknown> {
   return body
 }
 
-/** A transport failure, as opposed to the server saying no. */
+/**
+ * A transport failure, as opposed to the server saying no — or this device
+ * breaking.
+ *
+ * This used to be `!(e instanceof ApiError)`, i.e. "anything that is not an HTTP
+ * response is the network's fault". That swept up every local failure — a Dexie
+ * transaction aborting, a value that would not clone, a bug in this file — and
+ * reported it as "offline" while every request was returning 200. The symptom is
+ * miserable to diagnose, because it sends you to check a connection that was
+ * never the problem.
+ *
+ * `fetch` rejects with a `TypeError` and nothing else for a genuine transport
+ * failure, so that is the test. Anything else is ours, and says so.
+ */
 function isNetworkError(e: unknown): boolean {
-  return !(e instanceof ApiError)
+  if (e instanceof ApiError) return false
+  if (e instanceof TypeError) return true
+  // A DOM AbortError is a navigation or a closing tab, not a defect.
+  if (e instanceof DOMException && e.name === 'AbortError') return true
+  return typeof navigator !== 'undefined' && navigator.onLine === false
 }
 
 /** The engine this app uses. Tests build their own. */
