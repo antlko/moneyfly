@@ -1,0 +1,14 @@
+{
+  "extends": "@tsconfig/node24/tsconfig.json",
+  "include": ["vite.config.*", "vitest.config.*", "eslint.config.*"],
+  "compilerOptions": {
+    "noEmit": true,
+    // vitest.config.ts imports ./vite.config.ts with its extension, which Vite's
+    // native config loader requires and TypeScript otherwise rejects.
+    "allowImportingTsExtensions": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "vitest"]
+  }
+}

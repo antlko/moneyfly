@@ -1,6 +1,0 @@
-# Generated from docs/openapi.yaml by `npm run gen:api`; its formatting is the
-# generator's business, not ours.
-src/api/schema.d.ts
-
-dist/
-node_modules/

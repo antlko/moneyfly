@@ -1,22 +1,20 @@
 # Build output
-/bin/
-/tmp/
-/internal/transport/rest/assets/dist/*
-!/internal/transport/rest/assets/dist/index.html
-
-# Local configuration and data: the database is the sensitive artefact
-config.yaml
-*.db
-*.db-wal
-*.db-shm
-/uploads/
-/backups/
-
-# Node
+/moneyfly
+web-ui/dist/
 node_modules/
-.vite/
 
-# Editors and OS
+# The built SPA is copied over backend/internal/web/dist before a release build.
+# Only the placeholder index.html is tracked, so the package compiles in a fresh
+# checkout without a frontend build.
+backend/internal/web/dist/*
+!backend/internal/web/dist/index.html
+
+# Runtime data — never commit someone's ledger
+/config/*
+!/config/config.example.yaml
+
+# Tooling
+.eslintcache
+.vite/
+*.local
 .DS_Store
-.idea/
-*.swp

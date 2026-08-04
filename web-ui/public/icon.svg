@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="moneyfly">
+  <!--
+    The mark is the app's own main screen: the spending donut, with a wing.
+    Deliberately not derived from Monefy's artwork.
+  -->
+  <rect width="512" height="512" rx="112" fill="#7ec89f" />
+  <circle
+    cx="238"
+    cy="312"
+    r="124"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="56"
+  />
+  <path
+    d="M338 150c46-50 104-74 148-66-12 50-52 92-104 108-24 8-44 10-58 8z"
+    fill="#ffffff"
+  />
+</svg>

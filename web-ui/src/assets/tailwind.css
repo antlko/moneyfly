@@ -1,0 +1,84 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+  moneyfly design tokens.
+
+  The `mf-*` values are eyedropper estimates from the reference screenshots and
+  are the single source of truth for the mobile shell — do not hardcode these
+  hex values in components, use the generated utilities (bg-mf-green, text-mf-red
+  and so on) so a colour correction is one edit here.
+
+  The `cat-*` palette is the per-category colour set. Category rows store a
+  palette *key* (e.g. "rose"), never a hex value, so re-theming does not require
+  rewriting synced rows on every device.
+*/
+/*
+  `static` matters: without it Tailwind only emits the theme variables it can see
+  used in a class. The cat-* palette is consumed at runtime through var() in
+  inline styles and SVG fills, which the scanner cannot see — so the variables
+  would be tree-shaken away and every category would render with no colour at
+  all. That is exactly what happened the first time.
+*/
+@theme static {
+  --color-mf-green: #7ec89f;
+  --color-mf-green-dark: #4f9c76;
+  --color-mf-green-soft: #a9dcc0;
+  --color-mf-bg: #eefaf1;
+  --color-mf-surface: #ffffff;
+  --color-mf-red: #f0857b;
+  --color-mf-red-text: #e2544a;
+  --color-mf-muted: #b9cfc2;
+  --color-mf-ink: #33473c;
+
+  --color-cat-violet: #a97fd0;
+  --color-cat-purple: #9b6fc4;
+  --color-cat-gold: #e8b820;
+  --color-cat-amber: #f5a623;
+  --color-cat-orange: #f0913c;
+  --color-cat-rose: #ef5f9e;
+  --color-cat-pink: #f57bb0;
+  --color-cat-magenta: #f0509a;
+  --color-cat-red: #e8433c;
+  --color-cat-coral: #e8534a;
+  --color-cat-green: #4caf50;
+  --color-cat-lime: #7ac143;
+  --color-cat-sage: #9db8a4;
+  --color-cat-blue: #4a90d9;
+  --color-cat-indigo: #3f6fc4;
+  --color-cat-steel: #6b8fa8;
+  --color-cat-stone: #c9a8ad;
+  --color-cat-gray: #b0b0b0;
+  --color-cat-slate: #a8b0a8;
+  --color-cat-teal: #4fb3a5;
+
+  /* The mobile shell is a fixed-height app frame, not a scrolling document. */
+  --spacing-safe-b: env(safe-area-inset-bottom, 0px);
+  --spacing-safe-t: env(safe-area-inset-top, 0px);
+}
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-mf-bg);
+    color: var(--color-mf-ink);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  /*
+    The record screen is a keypad, so every tap must register immediately and
+    nothing may double-tap-zoom. touch-action does this without disabling pinch
+    zoom on the rest of the app (which would be an accessibility regression).
+  */
+  button,
+  [role='button'] {
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+}

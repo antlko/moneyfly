@@ -1,88 +1,85 @@
-# MoneyApp
+<p align="center">
+  <img src="web-ui/public/icon.svg" width="88" alt="">
+</p>
 
-Self-hosted budget and net-worth tracker. One Go binary with the Vue SPA embedded,
-SQLite in a mounted volume, no sidecars, no CGO.
+<h1 align="center">moneyfly</h1>
 
-It replaces a *Monefy → Telegram bot → Google Sheets → hand-maintained Excel*
-pipeline. The full design lives in [docs/](docs/); start with
-[docs/README.md](docs/README.md).
+<p align="center">Self-hosted expense tracking that syncs across your devices.</p>
 
-**Built so far: all ten stages of [the plan](docs/implementation-plan/).** Log in, the
-seeded chart of accounts and categories, three-tap expense entry, budgets,
-plan-versus-actual with dated FX, the Monefy import — 1,683 real rows with an
-unrecognised name blocking the batch rather than vanishing from it — the metrics
-engine, and capital: net worth, allocation, runway and the month's change split
-into real saving and currency movement. **Both halves of the workbook are
-reproduced and parity-tested** (`make parity`). Rates now maintain themselves from
-two free, keyless providers, behind a manual/auto setting that also covers
-thresholds and prices. An opt-in Telegram bot relays an export from the phone into
-the same import pipeline. It installs to a phone home screen, runs standalone and
-opens offline with saving visibly disabled. The workbook's own history loads with
-`migrate-excel`, backups run nightly and restore is drilled on every build — see
-[docs/cutover.md](docs/cutover.md).
+---
 
-## Run it
+> **Status: usable.** Install it, record spending in three taps, switch periods, run accounts and
+> transfers, and search — all of it working with no connection, syncing when one returns.
+> Multi-currency, budgets, recurring records and the Monefy CSV import are still to come. See
+> [the roadmap](#roadmap).
 
-```bash
-export MONEYAPP_BOOTSTRAP_PASSWORD='pick-something-long'
-docker compose up -d
-docker compose run --rm moneyapp migrate up
-docker compose restart moneyapp
-open http://localhost:8080
-```
+moneyfly is a personal expense tracker you run yourself. On a phone it works the way Monefy does,
+because that design is hard to beat for the one thing that matters: a spend takes three taps —
+tap `−`, type the amount, pick the category. On a wide screen the same app becomes an analytics
+dashboard. Your data lives on your server and in your browser, and nowhere else.
 
-Log in as `admin@example.com` with that password; the first thing it asks for is a new
-one. Migrations are deliberately **not** run at boot — `/readyz` stays unhealthy until
-the schema is current, so a container started against an unmigrated database refuses
-traffic rather than writing against a schema it does not understand
-([adr/0011](docs/adr/0011-explicit-migrations.md)).
+## Why
 
-Set `MONEYAPP_BASE_URL` to your real `https://` address in production: the session
-cookie is marked `Secure` from it.
+- **Self-hosted, with real sync.** One binary, one SQLite file, one directory to back up. Devices
+  sync through your server — no Google Drive, no Dropbox, no vendor.
+- **Works offline.** The phone writes to local storage first and syncs in the background, so
+  recording a coffee in a basement café works exactly as well as at home.
+- **Installs like an app.** It is a PWA: Add to Home Screen on iOS or Android and it runs
+  full-screen with its own icon. There is no native app to install and none is planned.
+- **Your data stays exportable.** CSV export is configurable down to the column order, with a
+  Monefy-compatible profile so you can leave as easily as you arrived.
 
-## Develop
+## Quick start
 
 ```bash
-make tools        # golangci-lint v2 into ./bin (the config uses the v2 schema)
-make verify       # lint + test + migrate up/down/up — the CI gate
-make run          # server on :8080 against ./tmp/config
-make dev          # Vite dev server on :5173, proxying the API to :8080
+docker compose up --build
 ```
 
-`make help` lists the rest. Every stage's verification uses these targets, which are
-specified in [docs/implementation-plan/00-conventions.md](docs/implementation-plan/00-conventions.md) §12.
+Then open <http://localhost:8080>.
 
-## Layout
+Configuration is optional — a missing `config.yaml` starts with sensible defaults. To customise,
+copy `config/config.example.yaml` to `config/config.yaml` and restart. Every field is documented in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
+> **Installing on a phone needs HTTPS.** Service workers only register over HTTPS or on
+> `localhost`, so `http://192.168.x.x` will not offer "Add to Home Screen". Put the instance behind
+> Caddy, Tailscale Serve, or any reverse proxy with a certificate.
+
+## Development
+
+```bash
+make dev-api
 ```
-cmd/moneyapp        wiring only, no logic
-internal/transport  HTTP handlers, DTOs, validation      — never imports store
-internal/domain     business logic, pure where possible
-internal/store      repositories and all SQL
-internal/platform   Money, errors, logging, clock        — imports nothing above it
-migrations/         goose, forward-only, embedded
-ui/                 Vue 3 + TS + Pinia + Tailwind v4, built into the binary
-docs/               the specification this implements
+
+```bash
+make dev-ui
 ```
 
-Three invariants worth knowing before changing anything:
+Two servers side by side: Go on `:8080`, Vite on `:5173` proxying `/api` to it. Full instructions,
+including how to test sync between two devices, are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-- **Money is integer minor units**, never a float, and HUF has exponent 0
-  ([adr/0004](docs/adr/0004-integer-money.md)). Exponents come from the `currency`
-  table, never from a constant.
-- **`NULL` means not recorded; `0` means recorded zero.** They are never
-  interchangeable. This is the spreadsheet's `-1` sentinel bug, and
-  `TestBudgetReport_UnrecordedIsNull` / `TestBudgetReport_RecordedZeroIsZero` exist to
-  keep it from returning.
-- **Every query against a user-owned table filters on `user_id`.** With no encryption
-  at rest ([adr/0002](docs/adr/0002-no-encryption.md)) that predicate is the only
-  thing separating two users' finances, so `TestNoUnscopedQueries` fails the build on
-  a statement that omits it.
+## Roadmap
 
-## Before deploying this anywhere real
+| Phase | | |
+| --- | --- | --- |
+| 0 | Skeleton — build, serve, embed | ✅ |
+| 1 | Accounts: password + OIDC sign-in | ✅ |
+| 2 | Sync engine (offline-first op-log) | ✅ |
+| 3 | Monefy dashboard and record screens | ✅ |
+| 4 | Accounts, transfers, search, periods | ✅ |
+| 5 | Multi-currency with daily FX rates | |
+| 6–7 | Budgets, recurring records | |
+| 8 | Monefy CSV import | |
+| 9 | Export profiles, webhooks, API tokens | |
+| 10 | Desktop analytics dashboard | |
+| 11 | PWA polish, dark theme, PIN lock | ◐ installable & offline |
 
-The previous system left a live Telegram bot token and a Trading212 API key as source
-constants in `monefy-budget-parser/main.go`, and they are in git history.
-**Rotate the Telegram token and revoke the Trading212 key** — nothing here uses the
-latter, so revoking outright is simpler than rotating. Rewriting history is not a
-reliable fix.
+## Relationship to Monefy
+
+moneyfly reproduces Monefy's screen layout and interaction flow, which is the part worth keeping.
+It contains none of Monefy's artwork, wordmark or code, and is not affiliated with or endorsed by
+its authors. Category icons come from [Lucide](https://lucide.dev).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

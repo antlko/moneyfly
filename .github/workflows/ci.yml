@@ -1,160 +1,60 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches: [main]
-    tags: ['v*']
-
-env:
-  GO_VERSION: '1.25'
-  NODE_VERSION: '22'
-  IMAGE: ghcr.io/antlko/moneyapp
+    branches: [main, master]
+  pull_request:
 
 jobs:
-  lint:
+  backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - run: go vet ./...
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - name: gofmt
-        run: test -z "$(gofmt -l . | tee /dev/stderr)"
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-      - run: npm ci --no-audit --no-fund
-        working-directory: ui
-      - run: npm run lint
-        working-directory: ui
-      - run: npm run format:check
-        working-directory: ui
-      - name: openapi types are in sync with docs/openapi.yaml
-        working-directory: ui
         run: |
-          npm run gen:api
-          git diff --exit-code -- src/api/schema.d.ts
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race ./...
 
-  test:
+  frontend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 24
           cache: npm
-          cache-dependency-path: ui/package-lock.json
-      # Races are build failures, not warnings.
-      - run: go test -race -coverprofile=coverage.out ./...
-      - run: npm ci --no-audit --no-fund
-        working-directory: ui
+          cache-dependency-path: web-ui/package-lock.json
+      - run: npm ci
+      - run: npm run type-check
+      - run: npx oxlint .
+      - run: npx eslint .
       - run: npm run test
-        working-directory: ui
-      - name: coverage summary
-        run: go tool cover -func=coverage.out | tail -1
-
-  migrate-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      # up -> down -> up on a scratch database, so both directions are exercised
-      # before release.
-      - run: make migrate-check
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - run: npm ci --no-audit --no-fund
-        working-directory: ui
-      - run: npm run build
-        working-directory: ui
-      - name: build both architectures
-        run: |
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${GITHUB_SHA::7}" \
-              -o bin/moneyapp-linux-$arch ./cmd/moneyapp
-          done
-          file bin/moneyapp-linux-*
-      - uses: actions/upload-artifact@v4
-        with:
-          name: binaries
-          path: bin/
+      - run: npm run build-only
 
   image:
-    needs: [lint, test, migrate-check, build]
-    if: github.event_name == 'push'
+    # Proves the single-binary build still works end to end: SPA build → embed →
+    # cross-compiled static binary. Runs only after both toolchains are green.
+    needs: [backend, frontend]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
       - uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-
-  release:
-    needs: [image]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: binaries
-          path: bin
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            bin/moneyapp-linux-amd64
-            bin/moneyapp-linux-arm64
-            docs/openapi.yaml
+          push: false
+          build-args: VERSION=${{ github.sha }}

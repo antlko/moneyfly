@@ -1,0 +1,15 @@
+.git
+.github
+.idea
+.claude
+config
+docs
+scripts
+Makefile
+README.md
+CLAUDE.md
+moneyfly
+node_modules
+web-ui/node_modules
+web-ui/dist
+backend/internal/web/dist

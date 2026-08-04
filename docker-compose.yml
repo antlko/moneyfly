@@ -1,47 +1,20 @@
-# One container, one config file, one volume (docs/10-deployment-ci.md §10.1).
-#
-# Migrations are NOT run at boot. The documented upgrade sequence is:
-#   docker compose pull && docker compose down
-#   docker compose run --rm moneyapp migrate up
-#   docker compose up -d
-# /readyz stays unhealthy until the schema is current, so a container started
-# against an unmigrated database refuses traffic (docs/adr/0011-explicit-migrations.md).
-
 services:
-  moneyapp:
-    image: ${MONEYAPP_IMAGE:-ghcr.io/antlko/moneyapp:latest}
+  moneyfly:
     build:
       context: .
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-none}
-    container_name: moneyapp
-    ports:
-      - "8080:8080"
-    volumes:
-      - moneyapp-config:/config
-    environment:
-      # The only secret this application has, and it is optional.
-      MONEYAPP_TELEGRAM_TOKEN: "${MONEYAPP_TELEGRAM_TOKEN:-}"
-      # First run only, and both are needed: the admin is created from this address
-      # with this password, and must change it at first login. Without a
-      # config.yaml in the volume yet, these are how the first account is made.
-      MONEYAPP_AUTH_BOOTSTRAP_ADMIN_EMAIL: "${MONEYAPP_ADMIN_EMAIL:-admin@example.com}"
-      MONEYAPP_BOOTSTRAP_PASSWORD: "${MONEYAPP_BOOTSTRAP_PASSWORD:-}"
-      # A bare `docker compose up` has no TLS in front of it; set this to your real
-      # https URL in production so the session cookie is marked Secure.
-      MONEYAPP_SERVER_BASE_URL: "${MONEYAPP_BASE_URL:-http://localhost:8080}"
+        VERSION: dev
+    image: moneyfly:dev
+    container_name: moneyfly
     restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp
-    healthcheck:
-      test: ["CMD", "/moneyapp", "healthcheck"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-    mem_limit: 256m
-
-volumes:
-  moneyapp-config:
+    ports:
+      - '8080:8080'
+    volumes:
+      # config.yaml, moneyfly.db and exports all live here. Back up this one
+      # directory and you have backed up everything.
+      - ./config:/config
+    environment:
+      MONEYFLY_LOG_LEVEL: info
+      # Required once OIDC providers are configured — it is the origin the
+      # provider redirects back to.
+      # MONEYFLY_BASE_URL: https://money.example.com

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="moneyfly">
+  <!--
+    Maskable variant: Android crops this to an arbitrary shape (circle, squircle,
+    teardrop) and only the centre 80% is guaranteed visible, so the mark is
+    scaled to ~62% and the background is full-bleed with no rounding of its own.
+  -->
+  <rect width="512" height="512" fill="#7ec89f" />
+  <!-- The mark's visual centre is ~(300,260), not (256,256) — recentre on it. -->
+  <g transform="translate(256 256) scale(0.62) translate(-300 -260)">
+    <circle cx="238" cy="312" r="124" fill="none" stroke="#ffffff" stroke-width="56" />
+    <path
+      d="M338 150c46-50 104-74 148-66-12 50-52 92-104 108-24 8-44 10-58 8z"
+      fill="#ffffff"
+    />
+  </g>
+</svg>
