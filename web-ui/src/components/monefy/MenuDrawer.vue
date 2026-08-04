@@ -10,7 +10,7 @@ const emit = defineEmits<{ close: []; go: [string] }>()
 const ITEMS: { to: string; label: string; icon: Component; ready: boolean }[] = [
   { to: '/categories', label: 'Categories', icon: NotebookTabs, ready: false },
   { to: '/accounts', label: 'Accounts', icon: Banknote, ready: true },
-  { to: '/currencies', label: 'Currencies', icon: CircleDollarSign, ready: false },
+  { to: '/currencies', label: 'Currencies', icon: CircleDollarSign, ready: true },
   { to: '/account', label: 'Settings', icon: Settings, ready: true },
   { to: '/guides', label: 'Guides', icon: BookOpen, ready: false },
 ]

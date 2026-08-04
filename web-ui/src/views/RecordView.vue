@@ -1,25 +1,36 @@
 <script setup lang="ts">
-import { LayoutGrid, Repeat } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { LayoutGrid, Repeat, Trash2 } from '@lucide/vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 
+import AccountSheet from '@/components/monefy/AccountSheet.vue'
 import AmountDisplay from '@/components/monefy/AmountDisplay.vue'
 import CategoryGrid from '@/components/monefy/CategoryGrid.vue'
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import DateRow from '@/components/monefy/DateRow.vue'
 import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
-import { display, initialState, press, total, type Key } from '@/lib/calculator'
+import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
+import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
-import { exponent, toMinor } from '@/lib/money'
+import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
+import { db } from '@/db'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
 
-const props = defineProps<{ kind: 'expense' | 'income' }>()
+/**
+ * New record, or an existing one.
+ *
+ * The same screen for both: the fields are identical, and editing is the one
+ * place people go to correct the thing they got wrong three taps ago — sending
+ * them somewhere that looks different for it would be strange. `id` present
+ * means edit; `kind` then comes from the stored row rather than the route.
+ */
+const props = defineProps<{ kind?: 'expense' | 'income'; id?: string }>()
 
 const router = useRouter()
 const route = useRoute()
@@ -36,13 +47,66 @@ const calc = ref(initialState())
 const day = ref(today())
 const note = ref('')
 const showNewCategory = ref(false)
+const showAccounts = ref(false)
 
-const currency = computed(() => dashboard.baseCurrency)
+/** The row being edited, once it has been read out of the replica. */
+const existing = ref<Row | null>(null)
+const editing = computed(() => props.id !== undefined)
+/** Set from the stored row when editing; the route param otherwise. */
+const kind = computed<'expense' | 'income'>(
+  () => (existing.value?.kind as 'expense' | 'income') ?? props.kind ?? 'expense',
+)
+/** While editing, the category the row already has — changed by the same grid. */
+const categoryId = ref<string | null>(null)
+
+/**
+ * Load the record being edited.
+ *
+ * Straight from IndexedDB, like everything else on this screen: opening an
+ * expense to fix its amount must work in a tunnel, and a spinner here would
+ * mean the app had suddenly acquired a network dependency for reading its own
+ * data.
+ */
+onMounted(async () => {
+  if (!props.id) return
+  const row = await db.txn.get(props.id)
+  if (!row || row.deleted) {
+    await router.replace('/')
+    return
+  }
+  existing.value = row
+  accountId.value = String(row.accountId ?? '')
+  categoryId.value = String(row.categoryId ?? '')
+  day.value = String(row.occurredOn ?? today())
+  note.value = String(row.note ?? '')
+  const major = Math.abs(Number(row.amountMinor ?? 0))
+  calc.value = typed(String(toMajor(major, String(row.currency ?? dashboard.baseCurrency))))
+})
+
+/**
+ * The account paying for this, and therefore the currency of the amount.
+ *
+ * A record used to be written in the base currency with an account then picked
+ * to match, which put a euro expense on a forint wallet the moment the two
+ * disagreed. Following the account is both what the reference does and the only
+ * version that survives having two currencies.
+ *
+ * `null` until something is chosen, so the first active account is the default
+ * without pinning it before the replica has loaded.
+ */
+const accountId = ref<string | null>(null)
+const account = computed(
+  () =>
+    taxonomy.activeAccounts.find((a) => String(a.id) === accountId.value) ??
+    taxonomy.activeAccounts[0],
+)
+
+const currency = computed(() => String(account.value?.currency ?? dashboard.baseCurrency))
 const amount = computed(() => display(calc.value))
 const hasAmount = computed(() => total(calc.value) > 0)
 
 const categories = computed(() =>
-  props.kind === 'expense' ? taxonomy.expenseCategories : taxonomy.incomeCategories,
+  kind.value === 'expense' ? taxonomy.expenseCategories : taxonomy.incomeCategories,
 )
 
 /**
@@ -54,11 +118,14 @@ const categories = computed(() =>
  * tapping the wrong icon must not be a dead end.
  */
 const chosen = computed(() => {
-  const id = route.query.category
+  const id = categoryId.value ?? route.query.category
   return typeof id === 'string' ? categories.value.find((c) => c.id === id) : undefined
 })
 
-const title = computed(() => (props.kind === 'expense' ? 'New expense' : 'New income'))
+const title = computed(() => {
+  if (editing.value) return kind.value === 'expense' ? 'Edit expense' : 'Edit income'
+  return kind.value === 'expense' ? 'New expense' : 'New income'
+})
 
 function key(pressed: Key) {
   calc.value = press(calc.value, pressed, exponent(currency.value))
@@ -75,38 +142,68 @@ function confirm() {
   else toCategories()
 }
 
-const account = computed(
-  () => taxonomy.activeAccounts.find((a) => a.currency === currency.value) ?? taxonomy.activeAccounts[0],
-)
+function pickAccount(next: Row) {
+  showAccounts.value = false
+  accountId.value = String(next.id)
+  // The new currency may allow fewer decimals than the old one (EUR to HUF), so
+  // a part-typed amount has to be re-normalised rather than left with a
+  // fraction the currency cannot express.
+  calc.value = press(calc.value, 'clear', exponent(currency.value))
+}
 
 async function record(category: Row) {
   const major = total(calc.value)
   if (major <= 0) return
 
   const minor = toMinor(major, currency.value)
-  const id = await sync.write('txn', {
-    kind: props.kind,
-    occurredOn: day.value,
-    // Expenses are stored negative, the way the Monefy export writes them, so
-    // summing a month needs no knowledge of which kind a row is.
-    amountMinor: props.kind === 'expense' ? -minor : minor,
-    currency: currency.value,
-    categoryId: category.id,
-    accountId: account.value?.id ?? DEFAULT_ACCOUNT_ID,
-    note: note.value.trim(),
-  })
+  // An edit reuses the row id, so it travels as an ordinary last-write-wins op
+  // and merges with whatever another device did to the same record.
+  await sync.write(
+    'txn',
+    {
+      kind: kind.value,
+      occurredOn: day.value,
+      // Expenses are stored negative, the way the Monefy export writes them, so
+      // summing a month needs no knowledge of which kind a row is.
+      amountMinor: kind.value === 'expense' ? -minor : minor,
+      currency: currency.value,
+      categoryId: category.id,
+      accountId: account.value?.id ?? DEFAULT_ACCOUNT_ID,
+      note: note.value.trim(),
+    },
+    props.id,
+  )
 
-  // Deliberately silent. A toast here covers the bottom of the dashboard you
-  // were just returned to — including the record buttons — and the record is
-  // visible on the chart the moment you land, which is confirmation enough.
-  // Undo is the Delete on each row of the records sheet (swipe the balance up).
-  void id
+  // Deliberately silent when creating: a toast covers the bottom of the
+  // dashboard you were just returned to — including the record buttons — and
+  // the record is visible on the chart the moment you land.
+  if (editing.value) toast('Record updated')
 
   // Jump to the period the record belongs to, not whichever one happened to be
   // open — recording something dated last week and landing on a chart that does
   // not contain it looks exactly like the record was lost.
   dashboard.goToDay(day.value)
   await router.replace('/')
+}
+
+/**
+ * Delete, with an undo rather than a confirmation dialogue.
+ *
+ * A tombstone keeps the row, so restoring it is a write like any other — which
+ * makes undo both possible and honest. A modal asking "are you sure" before
+ * every delete trains people to dismiss it.
+ */
+async function remove() {
+  const row = existing.value
+  if (!props.id || !row) return
+  const body = { ...row } as Record<string, unknown>
+  for (const k of ['id', 'lamport', 'deviceId', 'updatedAt', 'deleted']) delete body[k]
+
+  await sync.remove('txn', props.id)
+  await router.replace('/')
+  toast('Record deleted', {
+    action: { label: 'Undo', onClick: () => void sync.write('txn', body, props.id) },
+  })
 }
 
 async function createCategory(input: {
@@ -127,30 +224,37 @@ function back() {
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-2 pt-safe-t text-white">
-      <div class="flex h-14 items-center">
-        <button type="button" class="px-2 py-2 text-base" @click="back">
-          {{ step === 'category' ? 'Back' : 'Cancel' }}
-        </button>
-        <p class="flex-1 text-center text-lg font-semibold">{{ title }}</p>
+    <ScreenHeader :title="title" :on-back="back">
+      <template #actions>
         <button
+          v-if="editing"
           type="button"
-          class="px-2 py-2"
+          class="grid size-11 place-items-center"
+          aria-label="Delete record"
+          @click="remove"
+        >
+          <Trash2 :size="22" :stroke-width="1.8" />
+        </button>
+        <button
+          v-else
+          type="button"
+          class="grid size-11 place-items-center"
           aria-label="Make recurring"
           @click="toast('Recurring records arrive in a later phase')"
         >
           <Repeat :size="22" :stroke-width="1.8" />
         </button>
-      </div>
-    </header>
+      </template>
+    </ScreenHeader>
 
     <DateRow v-model:day="day" />
 
     <AmountDisplay
       :amount="amount"
       :currency="currency"
+      :account-name="String(account?.name ?? '')"
       @backspace="key('backspace')"
-      @pick-account="toast('Multiple accounts arrive in a later phase')"
+      @pick-account="showAccounts = true"
     />
 
     <template v-if="step === 'amount'">
@@ -165,7 +269,9 @@ function back() {
         />
       </label>
 
-      <div class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]">
+      <div
+        class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]"
+      >
         <AmountKeypad @press="key" />
         <div class="flex gap-2 px-3">
           <button
@@ -174,12 +280,7 @@ function back() {
             class="flex flex-1 items-center justify-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-base tracking-wide text-mf-green-dark uppercase disabled:opacity-40"
             @click="confirm"
           >
-            <CategoryIcon
-              v-if="chosen"
-              :icon="chosen.icon"
-              :color="chosen.color"
-              :size="22"
-            />
+            <CategoryIcon v-if="chosen" :icon="chosen.icon" :color="chosen.color" :size="22" />
             {{ chosen ? chosen.name : 'Choose category' }}
           </button>
           <button
@@ -196,22 +297,27 @@ function back() {
       </div>
     </template>
 
-    <div
-      v-else
-      class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]"
-    >
-      <CategoryGrid
-        :categories="categories"
-        @select="record"
-        @create="showNewCategory = true"
-      />
+    <div v-else class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]">
+      <CategoryGrid :categories="categories" @select="record" @create="showNewCategory = true" />
     </div>
 
-    <NewCategorySheet
-      v-if="showNewCategory"
-      :kind="kind"
-      @cancel="showNewCategory = false"
-      @create="createCategory"
-    />
+    <Transition name="mf-sheet">
+      <AccountSheet
+        v-if="showAccounts"
+        :options="taxonomy.activeAccounts"
+        :selected-id="String(account?.id ?? '')"
+        @select="pickAccount"
+        @close="showAccounts = false"
+      />
+    </Transition>
+
+    <Transition name="mf-sheet">
+      <NewCategorySheet
+        v-if="showNewCategory"
+        :kind="kind"
+        @cancel="showNewCategory = false"
+        @create="createCategory"
+      />
+    </Transition>
   </div>
 </template>

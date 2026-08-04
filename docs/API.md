@@ -3,7 +3,8 @@
 JSON over HTTP, same origin as the SPA. Errors are always `{"error": "message"}` with a meaningful
 status — there is no second error shape anywhere.
 
-> Health, auth and sync exist today (phases 0–2). This document is filled in as later phases land.
+> Health, auth, sync and exchange rates exist today (phases 0–5). This document is filled in as
+> later phases land.
 
 ## Conventions
 
@@ -89,6 +90,55 @@ The account comes from the session; any `userId` in the payload is ignored. A **
 error** — the losing op is silently not applied, which is what makes retrying a push safe. Only a
 structurally invalid op appears in `rejected`, and only that op: one bad row never costs a device the
 rest of its batch.
+
+## Exchange rates
+
+Read-only, and not scoped to a user — a rate is a fact about the world. Still behind the session
+cookie: an instance nobody is signed in to should answer nothing but `/api/health`.
+
+Rates are only ever stored **against EUR**. `X -> EUR` is the computed inverse and `USD -> HUF` is a
+cross rate through EUR, so there is no endpoint to ask for those directly; the client does that
+arithmetic itself (`web-ui/src/lib/fx.ts`), which is also what lets it convert with no connection.
+
+**`rate` is a decimal string, not a number.** A JSON number is an IEEE 754 double in every browser,
+and this value multiplies into every figure derived from it.
+
+### `GET /api/fx/latest`
+
+The newest rate held for each quote currency. One request fills a client's cache for today.
+
+```json
+{
+  "base": "EUR",
+  "rates": [
+    { "asOf": "2026-08-04", "base": "EUR", "quote": "HUF",
+      "rate": "363.942549", "source": "open-er-api", "ageDays": 0 }
+  ]
+}
+```
+
+`ageDays` is how stale the rate is. Non-zero is normal — rates do not move at weekends — but a large
+value is how a provider that has quietly stopped publishing becomes visible, instead of every total
+silently freezing at last month's number.
+
+### `GET /api/fx/rates?quote=HUF&from=&to=`
+
+One pair's history, ascending. `from` defaults to 90 days before `to`, `to` to today; both are
+`YYYY-MM-DD`. `base` defaults to `EUR` and is the only value that returns anything.
+
+A client pulls this so that a record dated last month is priced with last month's rate. Re-pricing
+old records at today's rate would make past totals move every time the app is opened.
+
+### `GET /api/fx/currencies`
+
+The exponent table — how many decimal places each currency's minor unit implies.
+
+```json
+{ "default": 2, "currencies": [{ "code": "HUF", "exponent": 0 }] }
+```
+
+The client ships its own copy of this so it can format from the first paint offline; the endpoint
+exists so the two can be compared after a server upgrade.
 
 ## Not found
 

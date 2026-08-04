@@ -73,6 +73,18 @@ export function longDate(day: DayKey, locale?: string): string {
   return `${weekday}, ${rest}`
 }
 
+/**
+ * `'4 Aug'` — the date on a transaction row.
+ *
+ * Short because it sits at the end of a row that already has an amount on it,
+ * and the reference puts the day there without a year: inside a period you
+ * already know which month you are looking at.
+ */
+export function shortDate(day: DayKey, locale?: string): string {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
+}
+
 // --- Periods ---------------------------------------------------------------------
 
 /**
@@ -167,7 +179,11 @@ export function shiftPeriod(period: Period, delta: number): Period {
       // walks in equal steps rather than jumping to an arbitrary month.
       const { from, to } = periodBounds(period)
       const span = Math.round((toDate(to).getTime() - toDate(from).getTime()) / 86_400_000) + 1
-      return { kind: 'interval', anchor: addDays(from, span * delta), until: addDays(to, span * delta) }
+      return {
+        kind: 'interval',
+        anchor: addDays(from, span * delta),
+        until: addDays(to, span * delta),
+      }
     }
   }
 }

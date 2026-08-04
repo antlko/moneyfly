@@ -21,6 +21,14 @@ const router = createRouter({
       props: true,
     },
     {
+      // Editing reuses the record screen: the fields are the same, and sending
+      // someone somewhere that looks different to fix a typo is disorienting.
+      path: '/edit/:id',
+      name: 'edit-record',
+      component: () => import('@/views/RecordView.vue'),
+      props: true,
+    },
+    {
       path: '/accounts',
       name: 'accounts',
       component: () => import('@/views/AccountsView.vue'),
@@ -39,6 +47,11 @@ const router = createRouter({
       path: '/account',
       name: 'account',
       component: () => import('@/views/AccountView.vue'),
+    },
+    {
+      path: '/currencies',
+      name: 'currencies',
+      component: () => import('@/views/CurrenciesView.vue'),
     },
     {
       path: '/debug/sync',

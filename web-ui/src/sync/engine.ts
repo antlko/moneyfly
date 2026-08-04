@@ -12,17 +12,10 @@ import {
   type OutboxOp,
 } from '@/db'
 import { deviceId } from '@/lib/device'
+import { plain } from '@/lib/plain'
 import { uuidv7 } from '@/lib/uuid'
 import { mergeChange } from './lww'
-import type {
-  Change,
-  Entity,
-  Op,
-  PullResponse,
-  PushResponse,
-  Row,
-  SnapshotResponse,
-} from './types'
+import type { Change, Entity, Op, PullResponse, PushResponse, Row, SnapshotResponse } from './types'
 
 export type SyncState = 'idle' | 'syncing' | 'offline' | 'error'
 
@@ -176,9 +169,15 @@ export class SyncEngine {
   private async record(
     entity: Entity,
     id: string,
-    body: Record<string, unknown>,
+    input: Record<string, unknown>,
     deleted: boolean,
   ): Promise<void> {
+    // Stores hand over reactive proxies (a row read back through `useLiveQuery`,
+    // an array held in a store's state), and structured clone refuses those. The
+    // whole body is normalised once, here, so both the row and the outbox entry
+    // are storable and identical.
+    const body = plain(input)
+
     // One transaction over the row, the outbox and the clock: a write that made
     // it into the table but not the outbox would never reach the server, and a
     // reload between the two would never notice.

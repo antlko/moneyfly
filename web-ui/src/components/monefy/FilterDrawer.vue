@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Banknote } from '@lucide/vue'
-import { ref } from 'vue'
+import { ref, useTemplateRef } from 'vue'
 
 import type { Period, PeriodKind } from '@/lib/period'
 import type { Row } from '@/sync/types'
@@ -76,6 +76,19 @@ function pick(kind: PeriodKind) {
 function manageAccounts() {
   emit('manageAccounts')
   emit('close')
+}
+
+const dateInput = useTemplateRef<HTMLInputElement>('dateInput')
+
+/** See DateRow: an overlaid `<input type="date">` does not open on desktop. */
+function openDatePicker() {
+  const el = dateInput.value
+  if (!el) return
+  try {
+    el.showPicker()
+  } catch {
+    el.click()
+  }
 }
 
 function chooseDate(event: Event) {
@@ -193,20 +206,23 @@ function chooseDate(event: Event) {
         kind of period is selected — picking a date while on Year should show
         that year, not that day.
       -->
-      <label class="relative block pt-2">
-        <span
-          class="block w-full rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3 text-center text-base"
-        >
-          Choose date
-        </span>
+      <button
+        type="button"
+        class="relative mt-2 block w-full rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3 text-center text-base"
+        @click="openDatePicker"
+      >
+        Choose date
+        <!-- Same reasoning as DateRow: an overlaid input does not open on desktop. -->
         <input
+          ref="dateInput"
           type="date"
           :value="period.anchor"
-          class="absolute inset-0 cursor-pointer opacity-0"
+          class="pointer-events-none absolute size-0 opacity-0"
+          tabindex="-1"
           aria-label="Choose date"
           @input="chooseDate"
         />
-      </label>
+      </button>
     </div>
   </AppDrawer>
 </template>

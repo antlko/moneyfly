@@ -14,36 +14,16 @@ defineEmits<{ close: [] }>()
     :class="side === 'right' && 'justify-end'"
     @click.self="$emit('close')"
   >
-    <aside
-      class="flex w-[78%] max-w-xs flex-col overflow-y-auto bg-mf-bg shadow-2xl"
-      :class="side === 'left' ? 'mf-slide-left' : 'mf-slide-right'"
-    >
+    <!--
+      The slide itself belongs to the `mf-drawer-*` transition wrapped around
+      this component at the call site — a keyframe here could only animate the
+      way in, and a drawer that snaps out of existence is the half that gets
+      noticed.
+    -->
+    <aside class="flex w-[78%] max-w-xs flex-col overflow-y-auto bg-mf-bg shadow-2xl">
       <div class="pt-safe-t" />
       <slot />
       <div class="pb-[calc(1rem+var(--spacing-safe-b))]" />
     </aside>
   </div>
 </template>
-
-<style scoped>
-/*
- * Kept local rather than as theme tokens: this is the drawer's own entrance, not
- * something another component should reach for.
- */
-.mf-slide-left {
-  animation: mf-in-left 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.mf-slide-right {
-  animation: mf-in-right 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-@keyframes mf-in-left {
-  from {
-    transform: translateX(-100%);
-  }
-}
-@keyframes mf-in-right {
-  from {
-    transform: translateX(100%);
-  }
-}
-</style>

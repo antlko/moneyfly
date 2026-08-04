@@ -1,19 +1,23 @@
 <script setup lang="ts">
+import { ChevronDown } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
 import { longDate } from '@/lib/period'
-import { useTaxonomyStore } from '@/stores/taxonomy'
-import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
-import CategoryIcon from './CategoryIcon.vue'
-import MoneyAmount from './MoneyAmount.vue'
+import TransactionRow from './TransactionRow.vue'
 
-const props = defineProps<{ rows: Row[]; currency: string; title: string }>()
-const emit = defineEmits<{ close: [] }>()
+const props = defineProps<{ rows: Row[]; title: string }>()
+const emit = defineEmits<{ close: []; open: [Row] }>()
 
-const taxonomy = useTaxonomyStore()
-
-/** Newest first, grouped by day — the order you look for a record you just made. */
+/**
+ * Every record in the period, newest first, grouped by day.
+ *
+ * The dashboard's list mode groups by category; this groups by day, which is the
+ * order you look in for something you just entered. What it must *not* do is
+ * look like a different application — it used to be a short bottom sheet with
+ * its own row design and a text "Close", so pulling the balance up landed you
+ * somewhere unrecognisable. Same rows, same background, near-full height.
+ */
 const days = computed(() => {
   const groups = new Map<string, Row[]>()
   for (const row of [...props.rows].sort((a, b) =>
@@ -27,29 +31,34 @@ const days = computed(() => {
   return [...groups.entries()]
 })
 
-const categoryOf = (row: Row) => taxonomy.byId.get(String(row.categoryId ?? ''))
-
 /*
- * Dragging the sheet back down closes it, which is the gesture that opened it
- * run backwards. Without it the only way out is the header button, and a sheet
- * you can only dismiss by aiming at a small target feels stuck.
+ * Dragging back down closes it: the gesture that opened it, run backwards.
+ * Without it the only way out is a small target, and a panel you have to aim at
+ * to dismiss feels stuck.
  */
 const drag = ref(0)
+let activePointer: number | null = null
 let startY = 0
-let tracking = false
 
 function onDown(e: PointerEvent) {
   if (!e.isPrimary) return
+  if (e.pointerType !== 'touch' && e.button !== 0) return
   startY = e.clientY
-  tracking = true
+  activePointer = e.pointerId
 }
 function onMove(e: PointerEvent) {
-  if (!tracking) return
+  if (activePointer !== e.pointerId) return
+  // Same rule as every other gesture here: a mouse moving with no button held
+  // is not a drag, and a button let go off-window never sends pointerup.
+  if (e.pointerType !== 'touch' && e.buttons === 0) {
+    onUp(e)
+    return
+  }
   drag.value = Math.max(0, e.clientY - startY)
 }
-function onUp() {
-  if (!tracking) return
-  tracking = false
+function onUp(e: PointerEvent) {
+  if (activePointer !== e.pointerId) return
+  activePointer = null
   if (drag.value > 90) emit('close')
   drag.value = 0
 }
@@ -58,8 +67,11 @@ function onUp() {
 <template>
   <div class="fixed inset-0 z-40 flex flex-col justify-end bg-black/30" @click.self="emit('close')">
     <section
-      class="flex max-h-[80%] flex-col rounded-t-2xl bg-mf-bg shadow-2xl"
-      :style="{ transform: `translateY(${drag}px)`, transition: drag ? '' : 'transform 180ms ease' }"
+      class="flex h-[92%] flex-col rounded-t-2xl bg-mf-bg shadow-2xl"
+      :style="{
+        transform: `translateY(${drag}px)`,
+        transition: drag ? '' : 'transform 180ms ease',
+      }"
     >
       <header
         class="shrink-0 cursor-grab touch-none px-4 pt-2 pb-3"
@@ -69,10 +81,15 @@ function onUp() {
         @pointercancel="onUp"
       >
         <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-mf-muted" />
-        <div class="flex items-center justify-between">
-          <h2 class="text-base font-medium">{{ title }}</h2>
-          <button type="button" class="text-sm text-mf-green-dark" @click="emit('close')">
-            Close
+        <div class="flex items-center gap-2">
+          <h2 class="flex-1 text-lg font-medium text-mf-green-dark">{{ title }}</h2>
+          <button
+            type="button"
+            class="grid size-9 place-items-center rounded-full text-mf-green-dark"
+            aria-label="Close"
+            @click="emit('close')"
+          >
+            <ChevronDown :size="22" :stroke-width="2" />
           </button>
         </div>
       </header>
@@ -80,34 +97,9 @@ function onUp() {
       <div class="min-h-0 flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]">
         <template v-for="[day, records] in days" :key="day">
           <p class="bg-mf-green-soft/25 px-4 py-1 text-xs text-mf-ink/70">{{ longDate(day) }}</p>
-          <ul class="divide-y divide-mf-muted/20">
-            <li v-for="row in records" :key="row.id" class="flex items-center gap-3 px-4 py-2.5">
-              <CategoryIcon
-                :icon="categoryOf(row)?.icon"
-                :color="categoryOf(row)?.color"
-                :size="26"
-              />
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-sm">
-                  {{ row.note || categoryOf(row)?.name || 'Uncategorised' }}
-                </p>
-                <p v-if="row.note" class="truncate text-xs text-mf-muted">
-                  {{ categoryOf(row)?.name }}
-                </p>
-              </div>
-              <MoneyAmount
-                :minor="Number(row.amountMinor ?? 0)"
-                :currency="String(row.currency ?? currency)"
-                class="text-sm font-medium"
-                :class="Number(row.amountMinor ?? 0) < 0 ? 'text-mf-red-text' : 'text-mf-green-dark'"
-              />
-              <button
-                type="button"
-                class="text-xs text-mf-red-text"
-                @click="sync.remove('txn', row.id)"
-              >
-                Delete
-              </button>
+          <ul class="divide-y divide-mf-muted/20 px-4">
+            <li v-for="row in records" :key="row.id">
+              <TransactionRow :row="row" @select="emit('open', $event)" />
             </li>
           </ul>
         </template>

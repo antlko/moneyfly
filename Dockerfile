@@ -28,8 +28,12 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 
 # --- Stage 3: minimal runtime image ---
 FROM gcr.io/distroless/static:latest
+# `image.source` is what links the GHCR package page back to the repository —
+# without it the package has no README and no inherited visibility. Set here as
+# well as by metadata-action so a local `docker build` produces the same image.
 LABEL org.opencontainers.image.title="moneyfly" \
-      org.opencontainers.image.description="Self-hosted expense tracking that syncs across your devices"
+      org.opencontainers.image.description="Self-hosted expense tracking that syncs across your devices" \
+      org.opencontainers.image.source="https://github.com/antlko/moneyfly"
 COPY --from=build /moneyfly /moneyfly
 ENV MONEYFLY_CONFIG_DIR=/config \
     MONEYFLY_ADDR=:8080

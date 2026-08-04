@@ -34,9 +34,21 @@ Start from `config/config.example.yaml`.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` | Fetch daily exchange rates. |
-| `refresh_at` | `04:00` | Local time of the daily refresh. |
-| `providers` | *empty* | Tried in order; the first that answers wins. Known ids: `open-er-api`, `fawazahmed0`. |
+| `enabled` | `false` (`true` in `config.example.yaml`) | Fetch daily exchange rates. With it off, records in a currency other than the base one are left out of totals and counted instead. |
+| `refresh_at` | `04:00` | Local time of the daily refresh, `HH:MM`. The next occurrence is computed each cycle rather than ticking every 24h, so it does not drift across restarts or daylight saving. |
+| `providers` | `[open-er-api, fawazahmed0]` | Tried in order; the first that answers wins. Both are free and keyless. |
+
+Three things are rejected at startup rather than at 04:00 the next morning: an unknown provider id,
+a `refresh_at` that is not a time of day, and `enabled: true` with an empty provider list. An unknown
+id used to be skipped in silence, and the only symptom was rates that quietly stopped updating.
+
+Nothing here is in a request path. A provider outage keeps the last stored rates and logs it; a
+single-day move over 15% is rejected and the previous rate kept, because a broken feed and a real
+currency event are indistinguishable on screen and only one of them should be believed.
+
+Which currencies a provider must publish to be accepted is not configured — it is read from your own
+accounts and records, so adding a forint account is what makes this instance start requiring a
+forint rate.
 
 ## `oidc`
 

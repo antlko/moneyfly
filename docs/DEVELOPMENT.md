@@ -108,3 +108,50 @@ make icons
 
 Edit the SVGs in `web-ui/public/` first. The script prefers `rsvg-convert` and falls back to macOS's
 `qlmanage`. The PNGs are committed, so this only runs when a source SVG changes.
+
+## Checking exchange rates locally
+
+`fx.enabled: true` in the config is not enough to see anything: the refresh only fetches currencies
+the instance actually uses, so an instance holding nothing but euro correctly does nothing. Add an
+account in another currency and restart — the startup catch-up runs when today's rates are missing:
+
+```bash
+curl -s localhost:8080/api/fx/latest | head -c 400
+```
+
+To exercise conversion end to end, record a spend in HUF (0 decimals — the case that catches an
+exponent bug) against a euro base currency. The dashboard total should include it, the transaction
+row should show the forint amount large with the euro value small underneath, and the whole thing
+should keep working with the network off, from the cached rates.
+
+The provider tests run against recorded fixtures in `backend/internal/fx/testdata`, never the live
+endpoints — CI must not depend on someone else's uptime.
+
+## Cutting a release
+
+Releases are tagged, not pushed. `.github/workflows/docker-publish.yml` fires on `v*` tags only:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+That builds `linux/amd64` and `linux/arm64` and pushes `ghcr.io/antlko/moneyfly` as `:0.1.0`,
+`:0.1`, `:latest` and `:sha-<short>`. Logging in to GHCR uses the `GLOGIN_TOKEN` repository secret
+(a PAT with `write:packages`), matching upmonitor.
+
+Two things are easy to get wrong here and both have bitten this pattern before:
+
+- **The tag name is the version.** It is passed through as `VERSION=${{ github.ref_name }}` and
+  baked into the binary with `-ldflags -X`. Drop the build arg and every published image reports
+  `dev` from `/api/health`.
+- **`latest` is gated on the tag, not on the default branch.** The idiomatic
+  `enable={{is_default_branch}}` is never true under a `tags:` trigger, so it silently produces no
+  `latest` at all — while the README tells people to pull exactly that.
+
+Verify a release with:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/antlko/moneyfly:latest
+```
+
+and check that `curl localhost:8080/api/health` reports the tag you just pushed.

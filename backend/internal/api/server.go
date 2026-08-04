@@ -76,6 +76,7 @@ func New(configDir string) (*Server, error) {
 	s.routes()
 
 	go s.retentionLoop()
+	go s.fxLoop()
 	return s, nil
 }
 
@@ -129,6 +130,13 @@ func (s *Server) routes() {
 	app.Delete("/api/auth/identities/:id", authed, s.handleDeleteIdentity)
 	app.Get("/api/devices", authed, s.handleListDevices)
 	app.Delete("/api/devices/:id", authed, s.handleDeleteDevice)
+
+	// Exchange rates. Read-only and not per-user — a rate is a fact about the
+	// world — but still behind auth, because an unauthenticated instance should
+	// answer nothing but /api/health.
+	app.Get("/api/fx/latest", authed, s.handleLatestRates)
+	app.Get("/api/fx/rates", authed, s.handleRateHistory)
+	app.Get("/api/fx/currencies", authed, s.handleCurrencies)
 
 	// Sync.
 	app.Post("/api/sync/push", authed, s.handlePush)

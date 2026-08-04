@@ -1,21 +1,20 @@
 <script setup lang="ts">
-import { Search, SlidersHorizontal } from '@lucide/vue'
+import { ChevronLeft, Search, SlidersHorizontal } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { useRouter } from 'vue-router'
 
-import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import MoneyAmount from '@/components/monefy/MoneyAmount.vue'
+import TransactionRow from '@/components/monefy/TransactionRow.vue'
 import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
 import { toMinor } from '@/lib/money'
-import { longDate } from '@/lib/period'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useTaxonomyStore } from '@/stores/taxonomy'
-import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
 
 const taxonomy = useTaxonomyStore()
 const dashboard = useDashboardStore()
+const router = useRouter()
 
 /*
  * Search runs against the local replica, so it works with no connection and
@@ -35,8 +34,10 @@ const maxAmount = ref('')
 
 const results = computed(() => {
   const text = query.value.trim().toLowerCase()
-  const min = minAmount.value === '' ? null : toMinor(Number(minAmount.value), dashboard.baseCurrency)
-  const max = maxAmount.value === '' ? null : toMinor(Number(maxAmount.value), dashboard.baseCurrency)
+  const min =
+    minAmount.value === '' ? null : toMinor(Number(minAmount.value), dashboard.baseCurrency)
+  const max =
+    maxAmount.value === '' ? null : toMinor(Number(maxAmount.value), dashboard.baseCurrency)
 
   return all.value
     .filter((row) => {
@@ -69,7 +70,8 @@ const totalMinor = computed(() =>
   results.value.reduce((sum, r) => sum + Number(r.amountMinor ?? 0), 0),
 )
 
-const categoryOf = (row: Row) => taxonomy.byId.get(String(row.categoryId ?? ''))
+/** Tapping a result opens it for editing — the row itself is the control. */
+const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
 
 function clear() {
   query.value = ''
@@ -84,9 +86,21 @@ function clear() {
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-2 pt-safe-t text-white">
-      <div class="flex h-14 items-center gap-2 px-2">
-        <RouterLink to="/" class="text-sm">‹ Back</RouterLink>
+    <header class="shrink-0 bg-mf-green pt-safe-t text-white">
+      <div class="flex h-14 items-center gap-1 px-1">
+        <!--
+          The search field takes the place of the title, so this screen keeps its
+          own header rather than bending ScreenHeader's slot into that shape —
+          but the back control has to be the identical 44px icon button.
+        -->
+        <button
+          type="button"
+          class="grid size-11 shrink-0 place-items-center rounded-full"
+          aria-label="Back"
+          @click="router.back()"
+        >
+          <ChevronLeft :size="26" :stroke-width="2" />
+        </button>
         <div class="flex flex-1 items-center gap-2 rounded-full bg-white/20 px-3 py-1.5">
           <Search :size="18" :stroke-width="2" />
           <input
@@ -108,7 +122,10 @@ function clear() {
       </div>
     </header>
 
-    <section v-if="showFilters" class="space-y-2 border-b border-mf-muted/25 bg-mf-surface/60 p-3 text-sm">
+    <section
+      v-if="showFilters"
+      class="space-y-2 border-b border-mf-muted/25 bg-mf-surface/60 p-3 text-sm"
+    >
       <div class="flex gap-2">
         <select
           v-model="categoryId"
@@ -130,9 +147,17 @@ function clear() {
         </select>
       </div>
       <div class="flex items-center gap-2">
-        <input v-model="from" type="date" class="flex-1 rounded-lg border border-mf-muted/60 bg-mf-surface px-2 py-2" />
+        <input
+          v-model="from"
+          type="date"
+          class="flex-1 rounded-lg border border-mf-muted/60 bg-mf-surface px-2 py-2"
+        />
         <span class="text-mf-muted">–</span>
-        <input v-model="to" type="date" class="flex-1 rounded-lg border border-mf-muted/60 bg-mf-surface px-2 py-2" />
+        <input
+          v-model="to"
+          type="date"
+          class="flex-1 rounded-lg border border-mf-muted/60 bg-mf-surface px-2 py-2"
+        />
       </div>
       <div class="flex items-center gap-2">
         <input
@@ -162,24 +187,10 @@ function clear() {
     </p>
 
     <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]">
-      <ul class="divide-y divide-mf-muted/20">
-        <li v-for="row in results" :key="row.id" class="flex items-center gap-3 px-4 py-2.5">
-          <CategoryIcon :icon="categoryOf(row)?.icon" :color="categoryOf(row)?.color" :size="26" />
-          <div class="min-w-0 flex-1">
-            <p class="truncate text-sm">
-              {{ row.note || categoryOf(row)?.name || (row.kind === 'transfer' ? 'Transfer' : '—') }}
-            </p>
-            <p class="text-xs text-mf-muted">{{ longDate(String(row.occurredOn)) }}</p>
-          </div>
-          <MoneyAmount
-            :minor="Number(row.amountMinor ?? 0)"
-            :currency="String(row.currency ?? dashboard.baseCurrency)"
-            class="text-sm font-medium"
-            :class="Number(row.amountMinor ?? 0) < 0 ? 'text-mf-red-text' : 'text-mf-green-dark'"
-          />
-          <button type="button" class="text-xs text-mf-red-text" @click="sync.remove('txn', row.id)">
-            Delete
-          </button>
+      <!-- The same row as the dashboard: one design for a transaction, everywhere. -->
+      <ul class="divide-y divide-mf-muted/20 px-4">
+        <li v-for="row in results" :key="row.id">
+          <TransactionRow :row="row" @select="openRecord" />
         </li>
       </ul>
 

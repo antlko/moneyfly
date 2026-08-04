@@ -113,8 +113,20 @@ as a bug even when the resulting state is right.
 period is negative. `⇩🏷` on the right controls sort order. In donut mode a second `≡` appears on the
 right of the pill (the screenshot shows the pill flanked by two of them).
 
-**The balance pill is also a handle.** Swiping it up — or tapping it — opens a sheet listing every
-record in the period. Dragging it back down, or tapping outside, closes it.
+**The balance pill is also a handle.** Swiping it up — or tapping it — opens a panel listing every
+record in the period, grouped by day, newest first. Dragging it back down, or tapping outside, closes
+it.
+
+That panel must not look like a different application. It was once a short bottom sheet with its own
+row design and a text `Close` button, so the gesture landed you somewhere unrecognisable — the
+complaint that prompted rewriting it. It is near-full height, on the dashboard's own background, with
+the same transaction rows as list mode and the period title in the same green as the carousel. The
+only control is a chevron.
+
+**Any gesture here must check that a button is held.** A mouse emits `pointermove` while hovering, so
+a handler reading coordinates alone treats crossing the window as a drag — and once it takes
+`setPointerCapture`, it swallows every click from its children. That shipped once: the period paged
+itself as the cursor moved, and the balance pill never received its own gesture.
 
 ### List mode
 
@@ -122,7 +134,29 @@ One row per category, sorted by amount descending:
 
 `⌄ chevron · category icon in its colour · name · green count badge · amount in red, right-aligned`
 
-Expanding a row reveals its individual transactions.
+The count badge sits **against the name**, not out at the right margin — out there it reads as part
+of the amount rather than as a count of what is in the category.
+
+Expanding a row reveals its individual transactions, drawn as:
+
+```
+●  ₴320.00                                        4 Aug
+   €6.40
+   Note, if there is one
+```
+
+- a **dot in the category's colour**, not the icon: the category is named in the row directly above,
+  and repeating its icon on every line turns a list into a column of pictures;
+- the amount **in the currency it was recorded in**, large;
+- the **base-currency value small underneath, and only when the currencies differ** — printing
+  "€6.40" under "€6.40" is noise on every row;
+- a short date (`4 Aug`) at the right;
+- **no `Edit` link and no `Delete` button.** The whole row is the control — a bigger target and one
+  fewer thing to read — and it opens the record for editing. A delete beside every amount is one
+  mis-tap from losing a record, so deleting lives on the edit screen with an undo.
+
+The same row component is used in the records panel and in search. One design for a transaction,
+everywhere.
 
 ### Donut mode
 
@@ -155,13 +189,22 @@ right. White fill, thick coloured border, coloured glyph. They must sit above
 
 ## 2. Record screen
 
-One screen, two steps. `Cancel` on the left of the header, `New expense` / `New income` centred, a
-"make recurring" control on the right.
+One screen, two steps. A back chevron on the left of the header, `New expense` / `New income`
+centred, a "make recurring" control on the right.
+
+**The same screen edits an existing record** (`/edit/:id`): the fields are identical, and sending
+someone somewhere that looks different to fix the thing they got wrong three taps ago is
+disorienting. Editing shows `Edit expense` and swaps the recurring control for a bin, which deletes
+with an undo toast rather than a confirmation dialogue — a modal before every delete only trains
+people to dismiss it. The save reuses the row id, so it travels as an ordinary last-write-wins op.
+
+Opening an existing record seeds the keypad with its amount in *append* mode: the first digit
+extends the figure rather than wiping it. Backspace is how you start over.
 
 ### Step A — amount
 
 ```
-🗓 Monday, 3 August              ← tap opens the date picker, defaults to today
+🗓 Monday, 3 August  ⌄          ← tap opens the date picker, defaults to today
 ┌────────────────────────────┐
 │ 💵                 0    ⌫  │   ← currency/account chip left, amount right
 │ EUR                        │
@@ -175,6 +218,15 @@ One screen, two steps. `Cancel` on the left of the header, `New expense` / `New 
 └───┴───┴───┴───┘
 [     CHOOSE CATEGORY      ]    ← full-width, advances to step B
 ```
+
+The date row is a real button that calls `showPicker()`, with a visible chevron. Overlaying a
+transparent `<input type="date">` on the row — the obvious implementation — works on a phone but is
+dead on desktop Chrome and Firefox, where only the calendar indicator opens the picker and that
+indicator is exactly what the transparency hides.
+
+**The currency chip is the account picker**, and the account decides the currency: an expense is
+denominated in whatever paid for it. Writing every record in the base currency and then choosing an
+account to match puts a euro expense on a forint wallet the moment the two disagree.
 
 The keypad is **the app's own**, not the OS keyboard: bigger targets, no layout shift, no zoom. The
 operator keys are real — it is a calculator, so `12.40 + 3` then `=` is a valid way to enter a total.
@@ -202,7 +254,7 @@ screen — which is why the two steps are one route, not two.
 
 There is deliberately **no confirmation toast**: it would cover the bottom of the dashboard you were
 just returned to — the record buttons included — and the new record is on the chart the moment you
-land, which is confirmation enough. Undo is the Delete on each row of the records sheet.
+land, which is confirmation enough. Undo is to tap the record and delete it from the edit screen.
 
 The dashboard jumps to the period the record belongs to rather than staying on whichever one happened
 to be open; recording something dated last week and landing on a chart that does not contain it looks
@@ -238,6 +290,38 @@ estimates and may be corrected — but only there, never in a component.
 
 Plus a 20-entry `cat-*` palette for categories. A category row stores the palette **key**, never a
 hex value.
+
+### Motion
+
+Two tokens in the same block, and every panel in the app uses them, so nothing reads as belonging to
+a different application:
+
+| Token | Value |
+| --- | --- |
+| `--mf-ease` | `cubic-bezier(0.22, 0.61, 0.36, 1)` |
+| `--mf-duration` | `200ms` |
+
+The curve decelerates hard at the end, which is what makes a sheet look like it settled rather than
+stopped. Five named transitions build on them — `mf-fade`, `mf-sheet`, `mf-drawer-l`, `mf-drawer-r`,
+`mf-page` — and they are applied by wrapping the `v-if` **at the call site**, because a `v-if` on its
+own cannot animate a departure and the departure is the half people notice. All of it collapses under
+`prefers-reduced-motion: reduce`; none of it is load-bearing.
+
+---
+
+## 4a. Multi-currency
+
+Every total on the dashboard is in the user's base currency. A record keeps the currency of the
+account that paid for it and is converted at the rate **on the day it happened** — not today's, or
+last March's total would move every time the app was opened.
+
+A row whose rate is unknown is left out of the totals **and counted in a banner**. It is not
+silently dropped: that was the pre-phase-5 behaviour and the effect was a month that looked cheaper
+than it was. The transaction row shows the original amount either way.
+
+The `Currencies` screen in the right drawer lists each cached rate with its age. Age is the point: a
+provider that stops publishing raises no error anywhere, it just stops moving, and every total
+quietly keeps using an old number.
 
 ---
 

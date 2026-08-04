@@ -5,6 +5,7 @@ import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
 import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
+import { useFxStore } from './fx'
 import { useTaxonomyStore } from './taxonomy'
 
 export interface AccountInput {
@@ -24,6 +25,7 @@ export interface AccountInput {
  */
 export const useAccountsStore = defineStore('accounts', () => {
   const taxonomy = useTaxonomyStore()
+  const fx = useFxStore()
 
   // Every transaction, not just the visible period: a balance is the whole
   // history by definition.
@@ -37,24 +39,46 @@ export const useAccountsStore = defineStore('accounts', () => {
       currencies.set(String(account.id), String(account.currency ?? ''))
     }
 
+    /**
+     * An amount stated in the account's own currency, priced on the day.
+     *
+     * A record does not have to be in its account's currency — paying a euro
+     * card in forint is ordinary — so this converts rather than skipping.
+     * Skipping is what it used to do, and the effect was a balance that was
+     * silently short by however much was spent abroad.
+     */
+    const inAccount = (minor: number, currency: string, accountId: string, day: string) => {
+      const want = currencies.get(accountId) ?? ''
+      if (!want || want === currency) return minor
+      return fx.convert(minor, currency, want, day)
+    }
+
     for (const row of all.value) {
+      const day = String(row.occurredOn ?? '')
+      const currency = String(row.currency ?? '')
+
       const from = String(row.accountId ?? '')
-      // Only amounts in the account's own currency. Converting would need a rate
-      // for the day of the transaction, which arrives with FX in phase 5;
-      // summing regardless would produce a confident, wrong number.
-      if (totals.has(from) && row.currency === currencies.get(from)) {
-        totals.set(from, totals.get(from)! + Number(row.amountMinor ?? 0))
+      if (totals.has(from)) {
+        const debited = inAccount(Number(row.amountMinor ?? 0), currency, from, day)
+        // null means no rate is known. Leaving the row out is still wrong, but
+        // it is the only honest option — and the dashboard says how many.
+        if (debited !== null) totals.set(from, totals.get(from)! + debited)
       }
 
       const to = String(row.toAccountId ?? '')
       if (!to || !totals.has(to)) continue
-      const toCurrency = String(row.toCurrency ?? row.currency ?? '')
-      if (toCurrency !== currencies.get(to)) continue
       // A transfer stores what left the source as a negative amount and what
       // arrived as a separate positive one, because a cross-currency transfer's
-      // rate is not recoverable afterwards.
-      const credited = Number(row.toAmountMinor ?? Math.abs(Number(row.amountMinor ?? 0)))
-      totals.set(to, totals.get(to)! + credited)
+      // rate is not recoverable afterwards. That recorded pair is authoritative:
+      // it is what the bank actually did, so it is used in preference to any
+      // rate we hold.
+      const credited = inAccount(
+        Number(row.toAmountMinor ?? Math.abs(Number(row.amountMinor ?? 0))),
+        String(row.toCurrency ?? currency),
+        to,
+        day,
+      )
+      if (credited !== null) totals.set(to, totals.get(to)! + credited)
     }
     return totals
   })

@@ -33,6 +33,21 @@ export const initialState = (): CalcState => ({
   replaceOnNextDigit: true,
 })
 
+/**
+ * A state showing an amount that is already known — the edit screen opening on
+ * an existing record.
+ *
+ * `replaceOnNextDigit` is the interesting part: it is **false**, so typing a
+ * digit appends rather than wiping the figure. Someone opening a record to turn
+ * 14.40 into 144.00 types a zero; someone who wants a different number entirely
+ * presses backspace. Starting in "replace" mode would make the first key press
+ * destroy the value they came to look at.
+ */
+export function typed(amount: string): CalcState {
+  const entry = /^\d+(\.\d+)?$/.test(amount) ? amount : '0'
+  return { entry, accumulator: null, operator: null, replaceOnNextDigit: false }
+}
+
 const isDigit = (key: Key): key is Digit => key.length === 1 && key >= '0' && key <= '9'
 
 /**

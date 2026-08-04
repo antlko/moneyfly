@@ -16,7 +16,7 @@ change. Companion docs: [SYNC.md](SYNC.md) (the sync protocol — the heart of t
 | --- | --- | --- | --- |
 | `config.yaml` | `<config-dir>/config.yaml` | listen address, public URL, OIDC providers, FX chain, retention | a human, in an editor |
 | SQLite | `<config-dir>/moneyfly.db` | users, identities, sessions, devices, **every domain row**, `change_log`, FX rates, integrations **and their secrets** | `internal/db` |
-| IndexedDB | each browser profile | a full replica of that user's domain rows, the push queue, the sync cursor | `web-ui/src/db`, driven by `web-ui/src/sync` |
+| IndexedDB | each browser profile | a full replica of that user's domain rows, the push queue, the sync cursor, **plus a cache of exchange rates** | `web-ui/src/db`, driven by `web-ui/src/sync` and `web-ui/src/stores/fx.ts` |
 
 The split rule inherited from upmonitor still holds — hand-editable configuration goes in YAML;
 history, volume and secrets go in SQLite — but moneyfly lands almost everything in SQLite, because
@@ -53,7 +53,7 @@ errors are the only ones logged — a 404 is traffic, not an incident.
 | Worker | Cadence | Job | Status |
 | --- | --- | --- | --- |
 | retention | hourly | drop expired sessions and abandoned OIDC states; trim `change_log` past `sync.change_log_retention_days` | built |
-| FX refresh | daily at `fx.refresh_at` | walk the provider chain, store the day's rates | *planned* |
+| FX refresh | daily at `fx.refresh_at` | walk the provider chain, store the day's rates | built |
 | recurring | hourly | materialise due `recurring_rule` rows, idempotent on `(rule_id, occurred_on)` so a restart cannot double-post | *planned* |
 
 Trimming the journal costs a long-absent device a full re-bootstrap and never costs anyone data —
@@ -108,6 +108,40 @@ believing it had synced.
 of not using a site; eviction costs no *data* — the server has it all and the device re-bootstraps —
 but it does cost the **unsent queue**, which exists nowhere else.
 
+## 4b. Exchange rates
+
+Rates are the one thing in the app that is neither configuration nor synced user data, and they are
+modelled accordingly.
+
+**Storage is EUR-based, one direction only.** `fx_rate` holds `EUR -> X` and nothing else.
+`X -> EUR` is the computed inverse; `USD -> HUF` is a cross rate through EUR whose date is the
+*stalest* of the two legs. This removes by construction the failure where a database holds
+EUR→USD 1.14 and USD→EUR 0.88 and quietly disagrees with itself.
+
+**A lookup takes the exact date, else the nearest earlier one — never a later one.** A total
+computed for last March must not change because a rate arrived in April. Weekends and holidays leave
+gaps, so "earlier" is the normal case, not the exception.
+
+**`fx_rate` is not a synced table.** No `user_id`, no `data` JSON, no lamport, no tombstone. A rate
+is a fact about the world, so replicating it through a private ordered log would buy nothing. The
+server fetches it from providers; clients pull it over plain REST into a Dexie table of their own.
+That table is the one exception to "IndexedDB is a replica of synced rows", and it is worth knowing
+about before adding a second one.
+
+**Conversion happens on the client, from that cache, synchronously.** The rule from §1 applies
+here too: a total that needs a round trip is a total that disappears on the underground.
+`web-ui/src/lib/fx.ts` and `backend/internal/fx/fx.go` are therefore the same arithmetic written
+twice — rounding half-away-from-zero exactly once at the target exponent — with mirrored case tables
+in both test suites. This is the same deliberate duplication as the LWW rule, for the same reason.
+
+**Nothing in a request path waits on a provider.** The refresh worker is the only caller. A provider
+that fails is skipped for the next in `fx.providers`; a total outage keeps yesterday's rates and logs
+it. A single-day move over 15% is rejected and the previous rate kept, because a broken feed and a
+real currency event look identical on screen, and the wrong one corrupts every derived figure.
+
+What a provider must publish to be accepted is derived from the data (`db.UsedCurrencies`), not
+hardcoded: adding a forint account is what makes this instance start insisting on a forint rate.
+
 ## 5. Where to make a change
 
 | Change | Go here |
@@ -117,6 +151,8 @@ but it does cost the **unsent queue**, which exists nowhere else.
 | Anything about conflict handling | `internal/sync` and `web-ui/src/sync` — **and [SYNC.md](SYNC.md) in the same change** |
 | A screen's layout | `web-ui/src/components/monefy/*` — and check it against [MONEFY-PARITY.md](MONEFY-PARITY.md) |
 | A colour | `web-ui/src/assets/tailwind.css` `@theme` block, nowhere else |
+| Anything about currency conversion | `internal/fx` and `web-ui/src/lib/fx.ts` — **both, with their mirrored test tables** |
+| An overlay's animation | the named transitions in `web-ui/src/assets/tailwind.css`, applied by wrapping the `v-if` at the call site |
 | A new export destination | one `internal/exporter/target_*.go` that self-registers in `init()` |
 | A config field | `internal/config/config.go` (struct + `normalize` + `Validate`), `config.example.yaml`, [CONFIGURATION.md](CONFIGURATION.md) |
 
