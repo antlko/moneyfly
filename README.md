@@ -13,8 +13,8 @@
 ---
 
 > **Status: usable.** Install it, record spending in three taps, switch periods, run accounts and
-> transfers, and search — all of it working with no connection, syncing when one returns.
-> Multi-currency, budgets, recurring records and the Monefy CSV import are still to come. See
+> transfers in several currencies, edit and search — all of it working with no connection, syncing
+> when one returns. Budgets, recurring records and the Monefy CSV import are still to come. See
 > [the roadmap](#roadmap).
 
 moneyfly is a personal expense tracker you run yourself. On a phone it works the way Monefy does,
@@ -87,7 +87,7 @@ including how to test sync between two devices, are in [docs/DEVELOPMENT.md](doc
 | 2 | Sync engine (offline-first op-log) | ✅ |
 | 3 | Monefy dashboard and record screens | ✅ |
 | 4 | Accounts, transfers, search, periods | ✅ |
-| 5 | Multi-currency with daily FX rates | |
+| 5 | Multi-currency with daily FX rates | ✅ |
 | 6–7 | Budgets, recurring records | |
 | 8 | Monefy CSV import | |
 | 9 | Export profiles, webhooks, API tokens | |

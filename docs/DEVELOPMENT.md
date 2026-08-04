@@ -109,6 +109,24 @@ make icons
 Edit the SVGs in `web-ui/public/` first. The script prefers `rsvg-convert` and falls back to macOS's
 `qlmanage`. The PNGs are committed, so this only runs when a source SVG changes.
 
+## Checking exchange rates locally
+
+`fx.enabled: true` in the config is not enough to see anything: the refresh only fetches currencies
+the instance actually uses, so an instance holding nothing but euro correctly does nothing. Add an
+account in another currency and restart — the startup catch-up runs when today's rates are missing:
+
+```bash
+curl -s localhost:8080/api/fx/latest | head -c 400
+```
+
+To exercise conversion end to end, record a spend in HUF (0 decimals — the case that catches an
+exponent bug) against a euro base currency. The dashboard total should include it, the transaction
+row should show the forint amount large with the euro value small underneath, and the whole thing
+should keep working with the network off, from the cached rates.
+
+The provider tests run against recorded fixtures in `backend/internal/fx/testdata`, never the live
+endpoints — CI must not depend on someone else's uptime.
+
 ## Cutting a release
 
 Releases are tagged, not pushed. `.github/workflows/docker-publish.yml` fires on `v*` tags only:

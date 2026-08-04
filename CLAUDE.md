@@ -93,7 +93,25 @@ running the dev servers.
 - **Transfers are one row** (`kind='transfer'` with `to_account_id`), not a linked pair — a pair could
   sync half-applied.
 - **Money is integer minor units with a per-currency exponent.** HUF has 0 decimals and a real export
-  contains it; never assume 2.
+  contains it; never assume 2. The exponent table is `backend/internal/money/currency.go`, mirrored in
+  `web-ui/src/lib/money.ts`.
+- **Exchange rates are stored EUR-based only, and a lookup takes the nearest *earlier* date.** The
+  inverse is computed and a cross rate goes through EUR, which makes it impossible to hold
+  EUR→USD 1.14 and USD→EUR 0.88 at once. Never a later rate: a total computed for last March must not
+  change because a rate arrived in April.
+- **Conversion rounds half-away-from-zero exactly once, at the target exponent.** `fx.ConvertMinor`
+  in Go and `convertMinor` in `web-ui/src/lib/fx.ts` are the same function written twice and must
+  stay identical — the case tables in `fx_test.go` and `fx.test.ts` are mirrored on purpose. Rounding
+  twice (convert, then re-scale) is how a column of figures stops adding up to its own total.
+- **`fx_rate` is the one table on both sides that is not synced.** A rate is a fact about the world,
+  not about a user: no `user_id`, no `data` JSON, no tombstone, and it never enters the op-log. It is
+  fetched by the server from providers and pulled by clients over plain REST into their own Dexie
+  table. That is also why it may carry real constraints — the "the sync write path must never fail on
+  data" rule does not apply to a table no client op can reach.
+- **Everything written to IndexedDB must be structured-cloneable.** A Pinia store hands out reactive
+  Proxies, and `structuredClone` refuses them — this is what broke registration once. Normalisation
+  happens at the write boundary (`db.setMeta`, `SyncEngine.record`) via `lib/plain.ts`, not at the
+  call sites; `toRaw` is not enough, because it unwraps only the outer proxy.
 
 ## Conventions that bite
 
@@ -118,6 +136,15 @@ running the dev servers.
   TEXT column; the fields the *server* queries are SQLite VIRTUAL generated columns over it. So
   adding a field is a client-side change, and only a new server-side query needs a migration. Don't
   add typed columns to a synced table — you would then have two sources of truth for one value.
+- **A pointer gesture must track which pointer is down and check that a button is held.** A mouse
+  emits `pointermove` while merely hovering, so a handler that looks at coordinates alone treats
+  crossing the window as a drag — and if it then takes `setPointerCapture`, it steals every click
+  from its children. `SwipePager` and `BalancePill` show the shape: record `pointerdown`'s
+  `pointerId`, ignore events without it, and bail when a mouse comes back with `buttons === 0`.
+- **Overlays animate by wrapping the `v-if` in a `<Transition>` at the call site**, not by a keyframe
+  inside the component: a `v-if` alone cannot animate a departure, and the departure is the half
+  people notice. The named transitions (`mf-fade`, `mf-sheet`, `mf-drawer-l/r`, `mf-page`) live in
+  `src/assets/tailwind.css` with `--mf-ease` / `--mf-duration`.
 - **A template handler must be one expression.** `@click="a(); b()"` across two statements — or one
   statement carrying a TypeScript cast — does not compile, and **`vue-tsc` does not catch it**: only
   the dev server does, at request time, and the page renders blank. Put it in a named function.
