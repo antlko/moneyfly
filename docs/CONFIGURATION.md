@@ -13,8 +13,12 @@ Start from `config/config.example.yaml`.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `addr` | `:8080` | Listen address. Overridden by `MONEYFLY_ADDR`. |
+| `addr` | `:5007` | Listen address. Overridden by `MONEYFLY_ADDR`. |
 | `base_url` | *empty* | Externally reachable origin, e.g. `https://money.example.com`. **Required once any OIDC provider is configured** — the provider must be handed an absolute redirect URI. Overridden by `MONEYFLY_BASE_URL`. |
+
+The default port is 5007 rather than the usual 8080: on a machine that self-hosts
+anything at all, 8080 is already taken, and the failure mode is a container that
+will not start for a reason that has nothing to do with this application.
 
 ## `app`
 

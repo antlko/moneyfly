@@ -17,7 +17,7 @@ make dev-api
 make dev-ui
 ```
 
-Go serves the API on `:8080`; Vite serves the SPA on `:5173` and proxies `/api` to it. Develop
+Go serves the API on `:5007`; Vite serves the SPA on `:5173` and proxies `/api` to it. Develop
 against the Vite URL — the Go server on its own only has the placeholder SPA embedded.
 
 Both read `./config`. It is gitignored apart from the example, so your local database never gets
@@ -71,7 +71,7 @@ waste an afternoon here.
 
 Options, easiest first:
 
-- `tailscale serve 8080` — gives a real certificate on your tailnet with no configuration.
+- `tailscale serve 5007` — gives a real certificate on your tailnet with no configuration.
 - Caddy with a local CA, plus installing that CA on the phone.
 - `mkcert` + a trusted root on the phone.
 
@@ -116,7 +116,7 @@ the instance actually uses, so an instance holding nothing but euro correctly do
 account in another currency and restart — the startup catch-up runs when today's rates are missing:
 
 ```bash
-curl -s localhost:8080/api/fx/latest | head -c 400
+curl -s localhost:5007/api/fx/latest | head -c 400
 ```
 
 To exercise conversion end to end, record a spend in HUF (0 decimals — the case that catches an
@@ -151,7 +151,7 @@ Two things are easy to get wrong here and both have bitten this pattern before:
 Verify a release with:
 
 ```bash
-docker run --rm -p 8080:8080 ghcr.io/antlko/moneyfly:latest
+docker run --rm -p 5007:5007 ghcr.io/antlko/moneyfly:latest
 ```
 
-and check that `curl localhost:8080/api/health` reports the tag you just pushed.
+and check that `curl localhost:5007/api/health` reports the tag you just pushed.

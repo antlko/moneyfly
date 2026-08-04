@@ -31,7 +31,7 @@ contract future sessions rely on.
 ## Working directories
 
 Two toolchains: run `npm` from `web-ui/`, run `go` from `backend/`. In dev they run side by side —
-Vite proxies `/api` to the Go server on `:8080`, per `web-ui/vite.config.ts`.
+Vite proxies `/api` to the Go server on `:5007`, per `web-ui/vite.config.ts`.
 
 ## Commands
 

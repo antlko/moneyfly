@@ -22,7 +22,7 @@ import (
 // config gets.
 const (
 	DefaultConfigDir              = "./config"
-	DefaultAddr                   = ":8080"
+	DefaultAddr                   = ":5007"
 	DefaultCurrency               = "EUR"
 	DefaultSessionTTLDays         = 365
 	DefaultChangeLogRetentionDays = 90

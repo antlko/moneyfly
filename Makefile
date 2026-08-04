@@ -9,10 +9,10 @@ help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-dev-api: ## Run the Go API on :8080 (serves the placeholder SPA)
+dev-api: ## Run the Go API on :5007 (serves the placeholder SPA)
 	cd $(BACKEND) && go run ./cmd/moneyfly --config-dir ../config
 
-dev-ui: ## Run the Vite dev server (proxies /api to :8080)
+dev-ui: ## Run the Vite dev server (proxies /api to :5007)
 	cd $(UI) && npm run dev
 
 build: ## Build the single binary with the SPA embedded

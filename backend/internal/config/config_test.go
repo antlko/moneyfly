@@ -62,7 +62,9 @@ sync:
 }
 
 func TestLoadEnvOverridesFile(t *testing.T) {
-	dir := write(t, "server:\n  addr: \":8080\"\n")
+	// Deliberately not DefaultAddr: if the file said the same thing as the
+	// default, this would pass even if the file were ignored entirely.
+	dir := write(t, "server:\n  addr: \":9999\"\n")
 	t.Setenv("MONEYFLY_ADDR", ":7070")
 
 	cfg, err := Load(dir)
