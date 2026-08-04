@@ -1,6 +1,8 @@
 .git
+.gitignore
 .github
 .idea
+.vscode
 .claude
 config
 docs
@@ -8,8 +10,14 @@ scripts
 Makefile
 README.md
 CLAUDE.md
+LICENSE
 moneyfly
 node_modules
 web-ui/node_modules
 web-ui/dist
 backend/internal/web/dist
+
+# Local runtime data — never bake someone's ledger into an image
+**/*.db
+**/*.db-shm
+**/*.db-wal

@@ -108,3 +108,32 @@ make icons
 
 Edit the SVGs in `web-ui/public/` first. The script prefers `rsvg-convert` and falls back to macOS's
 `qlmanage`. The PNGs are committed, so this only runs when a source SVG changes.
+
+## Cutting a release
+
+Releases are tagged, not pushed. `.github/workflows/docker-publish.yml` fires on `v*` tags only:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+That builds `linux/amd64` and `linux/arm64` and pushes `ghcr.io/antlko/moneyfly` as `:0.1.0`,
+`:0.1`, `:latest` and `:sha-<short>`. Logging in to GHCR uses the `GLOGIN_TOKEN` repository secret
+(a PAT with `write:packages`), matching upmonitor.
+
+Two things are easy to get wrong here and both have bitten this pattern before:
+
+- **The tag name is the version.** It is passed through as `VERSION=${{ github.ref_name }}` and
+  baked into the binary with `-ldflags -X`. Drop the build arg and every published image reports
+  `dev` from `/api/health`.
+- **`latest` is gated on the tag, not on the default branch.** The idiomatic
+  `enable={{is_default_branch}}` is never true under a `tags:` trigger, so it silently produces no
+  `latest` at all — while the README tells people to pull exactly that.
+
+Verify a release with:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/antlko/moneyfly:latest
+```
+
+and check that `curl localhost:8080/api/health` reports the tag you just pushed.

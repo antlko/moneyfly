@@ -6,6 +6,10 @@
 
 <p align="center">Self-hosted expense tracking that syncs across your devices.</p>
 
+<p align="center">
+  <a href="https://github.com/antlko/moneyfly/pkgs/container/moneyfly"><img src="https://img.shields.io/badge/ghcr.io-antlko%2Fmoneyfly-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
+</p>
+
 ---
 
 > **Status: usable.** Install it, record spending in three taps, switch periods, run accounts and
@@ -31,11 +35,27 @@ dashboard. Your data lives on your server and in your browser, and nowhere else.
 
 ## Quick start
 
+Pull the published image:
+
+```bash
+docker run -d --name moneyfly -p 8080:8080 -v moneyfly-config:/config ghcr.io/antlko/moneyfly:latest
+```
+
+Or use Compose — [`docker-compose.yml`](docker-compose.yml) is ready to copy, and pastes straight
+into Portainer → Stacks → Add stack:
+
+```bash
+docker compose up -d
+```
+
+To build from source instead, uncomment the `build:` stanza in that file:
+
 ```bash
 docker compose up --build
 ```
 
-Then open <http://localhost:8080>.
+Then open <http://localhost:8080>. The first account you create claims the instance and becomes the
+admin.
 
 Configuration is optional — a missing `config.yaml` starts with sensible defaults. To customise,
 copy `config/config.example.yaml` to `config/config.yaml` and restart. Every field is documented in

@@ -1,20 +1,27 @@
+# moneyfly — copy this file and run `docker compose up -d`,
+# or paste it into Portainer → Stacks → Add stack.
 services:
   moneyfly:
-    build:
-      context: .
-      args:
-        VERSION: dev
-    image: moneyfly:dev
+    image: ghcr.io/antlko/moneyfly:latest
+    # To build from source instead of pulling the published image, comment out
+    # `image:` above and uncomment these:
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
     container_name: moneyfly
     restart: unless-stopped
     ports:
       - '8080:8080'
     volumes:
       # config.yaml, moneyfly.db and exports all live here. Back up this one
-      # directory and you have backed up everything.
-      - ./config:/config
+      # volume and you have backed up everything.
+      - moneyfly-config:/config
     environment:
       MONEYFLY_LOG_LEVEL: info
       # Required once OIDC providers are configured — it is the origin the
       # provider redirects back to.
       # MONEYFLY_BASE_URL: https://money.example.com
+
+volumes:
+  moneyfly-config:
