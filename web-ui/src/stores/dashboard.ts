@@ -13,6 +13,7 @@ import {
 } from '@/lib/period'
 import type { Row } from '@/sync/types'
 import { useAuthStore } from './auth'
+import { useFxStore } from './fx'
 import { SETTING, useSettingsStore } from './settings'
 import { useTaxonomyStore } from './taxonomy'
 
@@ -40,6 +41,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const auth = useAuthStore()
   const settings = useSettingsStore()
   const taxonomy = useTaxonomyStore()
+  const fx = useFxStore()
 
   /**
    * The visible period. Not a month: the reference's left drawer switches
@@ -106,38 +108,55 @@ export const useDashboardStore = defineStore('dashboard', () => {
   })
 
   /**
-   * Rows in a currency other than the base one.
+   * A row's amount in the base currency, priced with the rate on the day it
+   * happened — not today's.
    *
-   * Until phase 5 brings dated FX rates there is no honest way to add them up,
-   * so they are **excluded and counted** rather than summed as if the numbers
-   * were comparable. A wrong total is worse than a visible gap.
+   * Using today's rate would make last March's total move every time the app is
+   * opened, which is indistinguishable from the app losing track of money.
+   *
+   * `null` means no rate is known for that pair. The row is then left out of the
+   * sums and counted instead: a total that quietly omits rows is exactly how a
+   * month comes to look cheaper than it was.
    */
-  const foreignCount = computed(
-    () => rows.value.filter((r) => r.currency !== baseCurrency.value).length,
+  function inBase(row: Row): number | null {
+    const currency = String(row.currency ?? baseCurrency.value)
+    if (currency === baseCurrency.value) return Number(row.amountMinor ?? 0)
+    return fx.convert(
+      Number(row.amountMinor ?? 0),
+      currency,
+      baseCurrency.value,
+      String(row.occurredOn ?? ''),
+    )
+  }
+
+  /** Rows whose currency cannot be converted to the base one. */
+  const unconvertedCount = computed(
+    () => rows.value.filter((r) => r.currency !== baseCurrency.value && inBase(r) === null).length,
   )
 
-  const spendable = computed(() => rows.value.filter((r) => r.currency === baseCurrency.value))
+  /** Rows that can be added up, each already in the base currency. */
+  const spendable = computed(() =>
+    rows.value
+      .map((row) => ({ row, minor: inBase(row) }))
+      .filter((r): r is { row: Row; minor: number } => r.minor !== null),
+  )
 
   const expenseMinor = computed(() =>
-    spendable.value
-      .filter((r) => r.kind === 'expense')
-      .reduce((sum, r) => sum + Number(r.amountMinor ?? 0), 0),
+    spendable.value.filter((r) => r.row.kind === 'expense').reduce((sum, r) => sum + r.minor, 0),
   )
   const incomeMinor = computed(() =>
-    spendable.value
-      .filter((r) => r.kind === 'income')
-      .reduce((sum, r) => sum + Number(r.amountMinor ?? 0), 0),
+    spendable.value.filter((r) => r.row.kind === 'income').reduce((sum, r) => sum + r.minor, 0),
   )
   /** What the balance pill shows: income minus spending for the month. */
   const balanceMinor = computed(() => incomeMinor.value + expenseMinor.value)
 
   const byCategory = computed<CategoryTotal[]>(() => {
     const totals = new Map<string, { totalMinor: number; count: number }>()
-    for (const row of spendable.value) {
+    for (const { row, minor } of spendable.value) {
       if (row.kind !== 'expense') continue
       const key = String(row.categoryId ?? '')
       const entry = totals.get(key) ?? { totalMinor: 0, count: 0 }
-      entry.totalMinor += Number(row.amountMinor ?? 0)
+      entry.totalMinor += minor
       entry.count++
       totals.set(key, entry)
     }
@@ -178,7 +197,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     sort,
     rows,
     baseCurrency,
-    foreignCount,
+    inBase,
+    unconvertedCount,
     expenseMinor,
     incomeMinor,
     balanceMinor,

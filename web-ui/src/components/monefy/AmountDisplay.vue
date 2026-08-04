@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Banknote, Delete } from '@lucide/vue'
 
-defineProps<{ amount: string; currency: string }>()
+defineProps<{ amount: string; currency: string; accountName?: string }>()
 defineEmits<{ backspace: []; pickAccount: [] }>()
 </script>
 
@@ -15,6 +15,13 @@ defineEmits<{ backspace: []; pickAccount: [] }>()
     >
       <Banknote :size="30" :stroke-width="1.5" />
       <span class="text-xs tracking-wide">{{ currency }}</span>
+      <!--
+        The account name under the code, because with two accounts in the same
+        currency the code alone no longer says which one is paying.
+      -->
+      <span v-if="accountName" class="max-w-16 truncate text-[10px] text-white/80">{{
+        accountName
+      }}</span>
     </button>
 
     <!--

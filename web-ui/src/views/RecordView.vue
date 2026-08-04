@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 
+import AccountSheet from '@/components/monefy/AccountSheet.vue'
 import AmountDisplay from '@/components/monefy/AmountDisplay.vue'
 import CategoryGrid from '@/components/monefy/CategoryGrid.vue'
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
@@ -37,8 +38,27 @@ const calc = ref(initialState())
 const day = ref(today())
 const note = ref('')
 const showNewCategory = ref(false)
+const showAccounts = ref(false)
 
-const currency = computed(() => dashboard.baseCurrency)
+/**
+ * The account paying for this, and therefore the currency of the amount.
+ *
+ * A record used to be written in the base currency with an account then picked
+ * to match, which put a euro expense on a forint wallet the moment the two
+ * disagreed. Following the account is both what the reference does and the only
+ * version that survives having two currencies.
+ *
+ * `null` until something is chosen, so the first active account is the default
+ * without pinning it before the replica has loaded.
+ */
+const accountId = ref<string | null>(null)
+const account = computed(
+  () =>
+    taxonomy.activeAccounts.find((a) => String(a.id) === accountId.value) ??
+    taxonomy.activeAccounts[0],
+)
+
+const currency = computed(() => String(account.value?.currency ?? dashboard.baseCurrency))
 const amount = computed(() => display(calc.value))
 const hasAmount = computed(() => total(calc.value) > 0)
 
@@ -76,11 +96,14 @@ function confirm() {
   else toCategories()
 }
 
-const account = computed(
-  () =>
-    taxonomy.activeAccounts.find((a) => a.currency === currency.value) ??
-    taxonomy.activeAccounts[0],
-)
+function pickAccount(next: Row) {
+  showAccounts.value = false
+  accountId.value = String(next.id)
+  // The new currency may allow fewer decimals than the old one (EUR to HUF), so
+  // a part-typed amount has to be re-normalised rather than left with a
+  // fraction the currency cannot express.
+  calc.value = press(calc.value, 'clear', exponent(currency.value))
+}
 
 async function record(category: Row) {
   const major = total(calc.value)
@@ -148,8 +171,9 @@ function back() {
     <AmountDisplay
       :amount="amount"
       :currency="currency"
+      :account-name="String(account?.name ?? '')"
       @backspace="key('backspace')"
-      @pick-account="toast('Multiple accounts arrive in a later phase')"
+      @pick-account="showAccounts = true"
     />
 
     <template v-if="step === 'amount'">
@@ -195,6 +219,16 @@ function back() {
     <div v-else class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]">
       <CategoryGrid :categories="categories" @select="record" @create="showNewCategory = true" />
     </div>
+
+    <Transition name="mf-sheet">
+      <AccountSheet
+        v-if="showAccounts"
+        :options="taxonomy.activeAccounts"
+        :selected-id="String(account?.id ?? '')"
+        @select="pickAccount"
+        @close="showAccounts = false"
+      />
+    </Transition>
 
     <Transition name="mf-sheet">
       <NewCategorySheet

@@ -15,15 +15,7 @@ import { deviceId } from '@/lib/device'
 import { plain } from '@/lib/plain'
 import { uuidv7 } from '@/lib/uuid'
 import { mergeChange } from './lww'
-import type {
-  Change,
-  Entity,
-  Op,
-  PullResponse,
-  PushResponse,
-  Row,
-  SnapshotResponse,
-} from './types'
+import type { Change, Entity, Op, PullResponse, PushResponse, Row, SnapshotResponse } from './types'
 
 export type SyncState = 'idle' | 'syncing' | 'offline' | 'error'
 

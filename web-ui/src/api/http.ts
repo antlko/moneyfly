@@ -7,6 +7,7 @@
  * the sync engine owns retrying.
  */
 
+import type { Rate } from '@/lib/fx'
 import type { Op, PullResponse, PushResponse, SnapshotResponse } from '@/sync/types'
 
 /** An error carrying the HTTP status, so callers can branch on 401 vs the rest. */
@@ -126,11 +127,25 @@ export const syncPush = (deviceId: string, ops: Op[]) =>
   api.post<PushResponse>('/api/sync/push', { deviceId, ops })
 
 export const syncPull = (since: number, deviceId: string) =>
-  api.get<PullResponse>(
-    `/api/sync/pull?since=${since}&deviceId=${encodeURIComponent(deviceId)}`,
-  )
+  api.get<PullResponse>(`/api/sync/pull?since=${since}&deviceId=${encodeURIComponent(deviceId)}`)
 
 export const syncSnapshot = () => api.get<SnapshotResponse>('/api/sync/snapshot')
+
+// --- Exchange rates ---------------------------------------------------------------
+
+/** The most recent rate for every quote the server holds. */
+export const fxLatest = () => api.get<{ base: string; rates: Rate[] }>('/api/fx/latest')
+
+/**
+ * A pair's history, so a record dated last month is priced with last month's
+ * rate. Re-pricing old records at today's rate would make past totals move
+ * every time the app is opened.
+ */
+export const fxHistory = (quote: string, from: string, to: string) =>
+  api.get<{ rates: Rate[] }>(
+    `/api/fx/rates?quote=${encodeURIComponent(quote)}` +
+      `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  )
 
 /** Where to send the browser to start an OIDC flow. Not a fetch — a navigation. */
 export function oidcStartUrl(providerId: string, opts: { link?: boolean; redirect?: string } = {}) {

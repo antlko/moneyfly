@@ -41,6 +41,11 @@ const router = createRouter({
       component: () => import('@/views/AccountView.vue'),
     },
     {
+      path: '/currencies',
+      name: 'currencies',
+      component: () => import('@/views/CurrenciesView.vue'),
+    },
+    {
       path: '/debug/sync',
       name: 'sync-debug',
       component: () => import('@/views/SyncDebugView.vue'),

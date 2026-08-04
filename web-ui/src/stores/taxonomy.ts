@@ -9,10 +9,7 @@ import type { Row } from '@/sync/types'
 
 /** Categories and accounts, live from the replica. */
 export const useTaxonomyStore = defineStore('taxonomy', () => {
-  const categories = useLiveQuery<Row[]>(
-    () => db.category.where('deleted').equals(0).toArray(),
-    [],
-  )
+  const categories = useLiveQuery<Row[]>(() => db.category.where('deleted').equals(0).toArray(), [])
   const accounts = useLiveQuery<Row[]>(() => db.account.where('deleted').equals(0).toArray(), [])
 
   const bySortOrder = (a: Row, b: Row) =>

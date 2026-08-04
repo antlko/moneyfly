@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useEventListener } from '@vueuse/core'
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -13,12 +14,14 @@ import MenuDrawer from '@/components/monefy/MenuDrawer.vue'
 import RecordsSheet from '@/components/monefy/RecordsSheet.vue'
 import SwipePager from '@/components/monefy/SwipePager.vue'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useFxStore } from '@/stores/fx'
 import { useSyncStore } from '@/stores/sync'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import type { Row } from '@/sync/types'
 
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
+const fx = useFxStore()
 const syncStore = useSyncStore()
 const router = useRouter()
 
@@ -34,6 +37,20 @@ watch(
   () => syncStore.revision,
   () => void taxonomy.ensureSeeded(dashboard.baseCurrency),
 )
+
+/*
+ * Top the rate cache up when the app opens and whenever it comes back to the
+ * foreground — the same trigger the sync engine uses, and for the same reason:
+ * a phone that has been in a pocket for a week has stale rates and no idea.
+ *
+ * Which currencies get fetched is read from the replica, so this costs one
+ * request per foreign currency actually in use, and none at all for someone
+ * with a single currency.
+ */
+onMounted(() => void fx.refresh(dashboard.baseCurrency))
+useEventListener(document, 'visibilitychange', () => {
+  if (!document.hidden) void fx.refresh(dashboard.baseCurrency)
+})
 
 /**
  * Tapping a category — on the donut or in the list — starts an expense already
@@ -78,12 +95,18 @@ const todo = (what: string) => () => console.info(`${what} lands in a later phas
       @prev="dashboard.step(-1)"
       @next="dashboard.step(1)"
     >
+      <!--
+        Foreign-currency rows are converted now, so this warns about the case
+        that is left: no rate known for that pair on that day. Those rows are
+        out of the totals, and saying so is the difference between a visible gap
+        and a month that quietly looks cheaper than it was.
+      -->
       <p
-        v-if="dashboard.foreignCount"
+        v-if="dashboard.unconvertedCount"
         class="mx-4 mt-2 shrink-0 rounded-lg bg-mf-green-soft/30 p-2 text-xs"
       >
-        {{ dashboard.foreignCount }} record(s) in another currency are not included — exchange rates
-        arrive in a later phase.
+        {{ dashboard.unconvertedCount }} record(s) have no exchange rate yet and are not included in
+        the total.
       </p>
 
       <!-- The donut block takes the whole body: its icon frame is sized to fill it. -->

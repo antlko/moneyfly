@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { ArrowDown } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AmountDisplay from '@/components/monefy/AmountDisplay.vue'
 import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import DateRow from '@/components/monefy/DateRow.vue'
+import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { display, initialState, press, total, type Key } from '@/lib/calculator'
-import { exponent, toMinor } from '@/lib/money'
+import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useFxStore } from '@/stores/fx'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
 
 const router = useRouter()
 const taxonomy = useTaxonomyStore()
 const dashboard = useDashboardStore()
+const fx = useFxStore()
 
 const accounts = computed(() => taxonomy.activeAccounts)
 const fromId = ref(String(accounts.value[0]?.id ?? ''))
@@ -33,7 +36,31 @@ const currency = computed(() => String(from.value?.currency ?? dashboard.baseCur
 const toCurrency = computed(() => String(to.value?.currency ?? currency.value))
 /** Only asked for when the two sides differ; otherwise the rate is 1 by definition. */
 const crossCurrency = computed(() => currency.value !== toCurrency.value)
+
+/**
+ * What the receiving account gets.
+ *
+ * Typed by hand, because the number that matters is what the bank actually
+ * credited — fees and spreads mean it is rarely the mid-market rate. But the
+ * rate on the day is a much better starting point than an empty box, so it is
+ * offered and left editable. `touched` is what stops the suggestion from
+ * overwriting a figure someone has already typed.
+ */
 const received = ref('')
+const touched = ref(false)
+
+const suggested = computed(() => {
+  if (!crossCurrency.value) return null
+  const sent = toMinor(total(calc.value), currency.value)
+  if (sent <= 0) return null
+  const converted = fx.convert(sent, currency.value, toCurrency.value, day.value)
+  return converted === null ? null : toMajor(converted, toCurrency.value)
+})
+
+watchEffect(() => {
+  if (touched.value) return
+  received.value = suggested.value === null ? '' : String(suggested.value)
+})
 
 const amount = computed(() => display(calc.value))
 const valid = computed(
@@ -89,15 +116,7 @@ function swap() {
 
 <template>
   <div class="flex h-full flex-col bg-mf-bg">
-    <header class="bg-mf-green px-2 pt-safe-t text-white">
-      <div class="flex h-14 items-center">
-        <button type="button" class="px-2 py-2 text-base" @click="router.replace('/')">
-          Cancel
-        </button>
-        <p class="flex-1 text-center text-lg font-semibold">Transfer</p>
-        <span class="w-16" />
-      </div>
-    </header>
+    <ScreenHeader title="Transfer" />
 
     <DateRow v-model:day="day" />
 
@@ -156,8 +175,9 @@ function swap() {
         <input
           v-model="received"
           type="number"
-          step="0.01"
+          :step="exponent(toCurrency) === 0 ? '1' : '0.01'"
           class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
+          @input="touched = true"
         />
       </label>
 

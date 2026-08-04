@@ -24,6 +24,16 @@ class MoneyflyDB extends Dexie {
   outbox!: EntityTable<OutboxOp, 'key'>
   /** Cursor, Lamport clock and bootstrap flag. */
   meta!: EntityTable<MetaRow, 'key'>
+  /**
+   * Cached exchange rates — the one table here that is **not** a replica of
+   * synced rows.
+   *
+   * A rate is a fact about the world rather than about this user, so it never
+   * enters the op-log: it arrives over plain REST from `/api/fx/*` and is kept
+   * here only so conversion works with no connection. It carries no lamport, no
+   * device id and no tombstone, and nothing in this table is ever pushed.
+   */
+  fx_rate!: EntityTable<CachedRate, 'key'>
 
   constructor(name = 'moneyfly', indexedDB?: IDBFactory) {
     // The injectable factory is what lets a test stand up two independent
@@ -38,6 +48,12 @@ class MoneyflyDB extends Dexie {
       user_setting: 'id, deleted',
       outbox: 'key, entity',
       meta: 'key',
+    })
+    this.version(2).stores({
+      // Keyed on quote+day so re-fetching an overlapping range overwrites
+      // instead of duplicating — the same idempotence the server's UNIQUE index
+      // gives, for the same reason.
+      fx_rate: 'key, quote, asOf',
     })
   }
 
@@ -95,6 +111,18 @@ export interface MetaRow {
   key: string
   value: unknown
 }
+
+/** One cached EUR-based rate. `key` is `quote/asOf`. */
+export interface CachedRate {
+  key: string
+  quote: string
+  asOf: string
+  /** The decimal string as the server sent it — parsed on read, never stored as a number. */
+  rate: string
+  source: string
+}
+
+export const rateKey = (quote: string, asOf: string) => `${quote}/${asOf}`
 
 export const db = new MoneyflyDB()
 

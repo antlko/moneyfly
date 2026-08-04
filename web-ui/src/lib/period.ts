@@ -167,7 +167,11 @@ export function shiftPeriod(period: Period, delta: number): Period {
       // walks in equal steps rather than jumping to an arbitrary month.
       const { from, to } = periodBounds(period)
       const span = Math.round((toDate(to).getTime() - toDate(from).getTime()) / 86_400_000) + 1
-      return { kind: 'interval', anchor: addDays(from, span * delta), until: addDays(to, span * delta) }
+      return {
+        kind: 'interval',
+        anchor: addDays(from, span * delta),
+        until: addDays(to, span * delta),
+      }
     }
   }
 }
