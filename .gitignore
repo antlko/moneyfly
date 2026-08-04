@@ -18,3 +18,5 @@ backend/internal/web/dist/*
 .vite/
 *.local
 .DS_Store
+.idea/
+.claude/
