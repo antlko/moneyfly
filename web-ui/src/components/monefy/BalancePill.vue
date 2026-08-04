@@ -25,7 +25,8 @@ const negative = computed(() => props.balanceMinor < 0)
 const row = useTemplateRef<HTMLElement>('row')
 const lift = ref(0)
 let startY = 0
-let tracking = false
+/** The pointer whose `pointerdown` we saw — `null` means nothing is pressed. */
+let activePointer: number | null = null
 let captured = false
 let dragged = false
 
@@ -34,14 +35,22 @@ const OPEN_THRESHOLD = 20
 
 function onDown(e: PointerEvent) {
   if (!e.isPrimary) return
+  // A mouse emits `pointermove` while hovering; without a recorded pointer and a
+  // held button the pill would follow the cursor around the screen.
+  if (e.pointerType !== 'touch' && e.button !== 0) return
   startY = e.clientY
-  tracking = true
+  activePointer = e.pointerId
   captured = false
   dragged = false
 }
 
 function onMove(e: PointerEvent) {
-  if (!tracking) return
+  if (activePointer !== e.pointerId) return
+  // A button let go outside the window never delivers `pointerup`.
+  if (e.pointerType !== 'touch' && e.buttons === 0) {
+    onUp(e)
+    return
+  }
   // Downward movement is ignored; there is nothing below to reveal.
   const up = startY - e.clientY
   if (!captured && up > 6) {
@@ -58,9 +67,11 @@ function onMove(e: PointerEvent) {
 }
 
 function onUp(e: PointerEvent) {
-  if (!tracking) return
-  tracking = false
-  if (captured) row.value?.releasePointerCapture?.(e.pointerId)
+  if (activePointer !== e.pointerId) return
+  activePointer = null
+  if (captured && row.value?.hasPointerCapture(e.pointerId)) {
+    row.value.releasePointerCapture(e.pointerId)
+  }
   const opened = lift.value >= OPEN_THRESHOLD
   lift.value = 0
   if (opened) emit('open')

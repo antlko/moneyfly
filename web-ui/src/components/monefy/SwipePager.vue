@@ -16,6 +16,13 @@ const emit = defineEmits<{ prev: []; next: [] }>()
  * `touch-action: pan-y` is what makes this coexist with the scrolling list: the
  * browser keeps vertical scrolling to itself and only horizontal gestures reach
  * these handlers.
+ *
+ * **A pointer gesture must track which pointer is down, and stay unconvinced
+ * until it is.** A mouse emits `pointermove` while merely hovering, so handlers
+ * that only look at coordinates treat crossing the window as a drag: the content
+ * follows the cursor, `setPointerCapture` runs with no button held — which then
+ * steals every click from the children — and the release flips the period. That
+ * bug shipped once; the `activePointer` bookkeeping below is what prevents it.
  */
 const SLIDE_MS = 190
 /** Fraction of the width that commits the gesture. */
@@ -28,13 +35,35 @@ const offset = ref(0)
 const transition = ref('')
 const busy = ref(false)
 
+/** The pointer whose `pointerdown` we saw — `null` means nothing is pressed. */
+let activePointer: number | null = null
 let startX = 0
 let startY = 0
 let width = 1
 let axis: 'undecided' | 'x' | 'y' = 'undecided'
 
+/** True only for events belonging to a gesture that actually started here. */
+function tracking(e: PointerEvent) {
+  return activePointer === e.pointerId
+}
+
+function reset() {
+  activePointer = null
+  axis = 'undecided'
+}
+
+/** `releasePointerCapture` throws when this element never held it. */
+function releaseCapture(e: PointerEvent) {
+  const el = root.value
+  if (el?.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+}
+
 function onPointerDown(e: PointerEvent) {
   if (!e.isPrimary || busy.value || props.disabled) return
+  // `button === 0` is the primary button for mouse and pen alike; a right-click
+  // or a middle-click must not arm the pager.
+  if (e.pointerType !== 'touch' && e.button !== 0) return
+  activePointer = e.pointerId
   startX = e.clientX
   startY = e.clientY
   width = root.value?.clientWidth ?? 1
@@ -43,13 +72,21 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
-  if (!e.isPrimary || busy.value || axis === 'y') return
+  if (!tracking(e) || busy.value || props.disabled || axis === 'y') return
+  // A mouse that let go outside the window never delivers `pointerup`; its next
+  // move arrives with no buttons held, and that is the moment to forget it.
+  if (e.pointerType !== 'touch' && e.buttons === 0) {
+    onPointerCancel(e)
+    return
+  }
+
   const dx = e.clientX - startX
   const dy = e.clientY - startY
 
   if (axis === 'undecided') {
     // Wait until the gesture has committed to a direction. Deciding on the very
-    // first move would steal the start of every vertical scroll.
+    // first move would steal the start of every vertical scroll — including the
+    // upward drag on the balance pill that opens the records list.
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
     axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
     if (axis === 'y') return
@@ -62,12 +99,12 @@ function onPointerMove(e: PointerEvent) {
 }
 
 async function onPointerUp(e: PointerEvent) {
-  root.value?.releasePointerCapture?.(e.pointerId)
-  if (axis !== 'x' || busy.value) {
-    axis = 'undecided'
-    return
-  }
-  axis = 'undecided'
+  if (!tracking(e)) return
+  releaseCapture(e)
+
+  const wasDrag = axis === 'x'
+  reset()
+  if (!wasDrag || busy.value || props.disabled) return
 
   const dx = e.clientX - startX
   const threshold = Math.min(width * COMMIT_RATIO, COMMIT_MAX_PX)
@@ -77,6 +114,15 @@ async function onPointerUp(e: PointerEvent) {
     return
   }
   await commit(dx < 0 ? 1 : -1)
+}
+
+/** Abandon the gesture and spring back — cancellation, or a button let go. */
+function onPointerCancel(e: PointerEvent) {
+  if (!tracking(e)) return
+  releaseCapture(e)
+  const wasDrag = axis === 'x'
+  reset()
+  if (wasDrag) void animateTo(0)
 }
 
 /**
@@ -113,14 +159,18 @@ async function commit(direction: 1 | -1) {
   }
 }
 
+/** One timer, reused: registering a disposer per animation leaks the scope. */
+let timer: ReturnType<typeof setTimeout> | undefined
+onScopeDispose(() => clearTimeout(timer))
+
 function animateTo(target: number): Promise<void> {
   transition.value = `transform ${SLIDE_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1)`
   offset.value = target
   return new Promise((resolve) => {
     // A little longer than the transition: clearing it early would cut the
     // animation short and show as a jump at the end.
-    const timer = setTimeout(resolve, SLIDE_MS + 20)
-    onScopeDispose(() => clearTimeout(timer))
+    clearTimeout(timer)
+    timer = setTimeout(resolve, SLIDE_MS + 20)
   })
 }
 </script>
@@ -132,7 +182,8 @@ function animateTo(target: number): Promise<void> {
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @pointercancel="axis = 'undecided'"
+    @pointercancel="onPointerCancel"
+    @lostpointercapture="onPointerCancel"
   >
     <div
       class="flex h-full flex-col"
