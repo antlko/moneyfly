@@ -118,6 +118,11 @@ func TestValidateRejects(t *testing.T) {
 		{"duplicate oidc id", "server:\n  base_url: http://x\noidc:\n" +
 			"  - {id: a, issuer: 'http://i', client_id: b}\n" +
 			"  - {id: a, issuer: 'http://i', client_id: c}\n"},
+		// A typo'd provider id used to be skipped in silence, and the symptom
+		// was rates that quietly stopped updating.
+		{"unknown fx provider", "fx:\n  providers: [ecb]\n"},
+		{"fx refresh_at not a time", "fx:\n  refresh_at: 'lunchtime'\n"},
+		{"fx refresh_at out of range", "fx:\n  refresh_at: '25:00'\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -134,5 +139,24 @@ func TestPaths(t *testing.T) {
 	}
 	if got, want := DBPath("/c"), filepath.Join("/c", "moneyfly.db"); got != want {
 		t.Errorf("DBPath = %q, want %q", got, want)
+	}
+}
+
+// The default provider chain has to be the one Validate accepts, or a config
+// that names nothing would fail on the values this package itself supplied.
+func TestFXDefaults(t *testing.T) {
+	cfg, err := Load(write(t, "fx:\n  enabled: true\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.FX.Providers) != len(FXProviders) {
+		t.Fatalf("providers = %v, want the default chain %v", cfg.FX.Providers, FXProviders)
+	}
+	if cfg.FX.RefreshAt != DefaultFXRefreshAt {
+		t.Errorf("refresh_at = %q, want %q", cfg.FX.RefreshAt, DefaultFXRefreshAt)
+	}
+	hour, minute, err := cfg.FX.RefreshHourMinute()
+	if err != nil || hour != 4 || minute != 0 {
+		t.Errorf("RefreshHourMinute = %d:%d, %v; want 4:0, nil", hour, minute, err)
 	}
 }

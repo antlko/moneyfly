@@ -1,0 +1,6 @@
+{
+  "result": "success",
+  "base_code": "EUR",
+  "time_last_update_utc": "Wed, 29 Jul 2026 00:00:01 +0000",
+  "rates": { "EUR": 1, "USD": 1.138108, "GBP": 0.865432 }
+}

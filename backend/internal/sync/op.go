@@ -258,6 +258,14 @@ func validateTxn(f fields) error {
 			return fmt.Errorf("toAmountMinor must be a whole number of minor units")
 		}
 	}
+	// The receiving currency was previously unchecked, so a transfer could name
+	// a receiving amount with no valid currency for it — and the two only mean
+	// something together.
+	if _, ok := f["toCurrency"]; ok {
+		if err := f.currency("toCurrency"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

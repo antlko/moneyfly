@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -27,6 +28,14 @@ const (
 	DefaultChangeLogRetentionDays = 90
 	DefaultFXRefreshAt            = "04:00"
 )
+
+// FXProviders are the provider ids `fx.providers` accepts, in the order a fresh
+// config gets them: the primary first, the fallback second.
+//
+// Validation checks membership rather than letting an unknown id be skipped
+// silently — a typo there is otherwise invisible until someone notices that
+// rates stopped updating a month ago.
+var FXProviders = []string{"open-er-api", "fawazahmed0"}
 
 // Config is the whole of config.yaml.
 type Config struct {
@@ -67,6 +76,35 @@ type FX struct {
 	Enabled   bool     `yaml:"enabled"`
 	RefreshAt string   `yaml:"refresh_at"`
 	Providers []string `yaml:"providers"`
+}
+
+// RefreshHourMinute parses RefreshAt into a wall-clock time of day.
+func (f FX) RefreshHourMinute() (hour, minute int, err error) {
+	if _, err := fmt.Sscanf(f.RefreshAt, "%d:%d", &hour, &minute); err != nil {
+		return 0, 0, fmt.Errorf("fx.refresh_at: want HH:MM, got %q", f.RefreshAt)
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, fmt.Errorf("fx.refresh_at: %q is not a time of day", f.RefreshAt)
+	}
+	return hour, minute, nil
+}
+
+func (f FX) validate() error {
+	if _, _, err := f.RefreshHourMinute(); err != nil {
+		return err
+	}
+	// An unknown id is a startup failure rather than a skipped provider: the
+	// symptom of skipping is rates that quietly stop moving.
+	for _, id := range f.Providers {
+		if !slices.Contains(FXProviders, id) {
+			return fmt.Errorf("fx.providers: unknown provider %q, want one of %s",
+				id, strings.Join(FXProviders, ", "))
+		}
+	}
+	if f.Enabled && len(f.Providers) == 0 {
+		return fmt.Errorf("fx.enabled is true but fx.providers is empty")
+	}
+	return nil
 }
 
 // OIDCProvider is one configured identity provider. Any standards-compliant
@@ -146,6 +184,9 @@ func (c *Config) normalize() {
 	if c.FX.RefreshAt == "" {
 		c.FX.RefreshAt = DefaultFXRefreshAt
 	}
+	if len(c.FX.Providers) == 0 {
+		c.FX.Providers = append([]string(nil), FXProviders...)
+	}
 	for i := range c.OIDC {
 		p := &c.OIDC[i]
 		if p.Name == "" {
@@ -196,6 +237,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Sync.ChangeLogRetentionDays < 1 {
 		return fmt.Errorf("sync.change_log_retention_days: want >= 1, got %d", c.Sync.ChangeLogRetentionDays)
+	}
+	if err := c.FX.validate(); err != nil {
+		return err
 	}
 
 	seen := make(map[string]bool, len(c.OIDC))
