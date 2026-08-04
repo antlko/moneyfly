@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { current, display, initialState, press, total, type Key } from './calculator'
+import { current, display, initialState, press, total, typed, type Key } from './calculator'
 
 /** Type a sequence of keys and return the final state. */
 function type(keys: string, maxDecimals = 2) {
@@ -130,5 +130,37 @@ describe('clear', () => {
     const state = type('1 2 + 3 clear')
     expect(display(state)).toBe('0')
     expect(total(state)).toBe(0)
+  })
+})
+
+describe('typed', () => {
+  it('opens on an existing amount and appends rather than replacing it', () => {
+    // The edit screen's first key press must not destroy the figure someone
+    // came to look at.
+    let state = typed('14')
+    expect(display(state)).toBe('14')
+
+    state = press(state, '0')
+    expect(display(state)).toBe('140')
+  })
+
+  it('still refuses more decimals than the currency has', () => {
+    // Seeding the state must not smuggle in a third decimal place.
+    const state = press(typed('14.40'), '0')
+    expect(display(state)).toBe('14.40')
+    expect(display(press(typed('3200'), '.', 0))).toBe('3200')
+  })
+
+  it('falls back to zero for anything that is not a plain decimal', () => {
+    for (const bad of ['', '-5', '1e3', 'abc']) {
+      expect(display(typed(bad))).toBe('0')
+    }
+  })
+
+  it('lets backspace clear it the normal way', () => {
+    let state = typed('14.4')
+    state = press(state, 'backspace')
+    state = press(state, 'backspace')
+    expect(display(state)).toBe('14')
   })
 })

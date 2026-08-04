@@ -2,18 +2,18 @@
 import { ChevronDown } from '@lucide/vue'
 import { ref } from 'vue'
 
-import { longDate } from '@/lib/period'
 import type { CategoryTotal } from '@/stores/dashboard'
 import type { Row } from '@/sync/types'
 import CategoryIcon from './CategoryIcon.vue'
 import MoneyAmount from './MoneyAmount.vue'
+import TransactionRow from './TransactionRow.vue'
 
 const props = defineProps<{
   totals: CategoryTotal[]
   rows: Row[]
   currency: string
 }>()
-defineEmits<{ edit: [Row] }>()
+defineEmits<{ open: [Row] }>()
 
 const expanded = ref<string | null>(null)
 
@@ -42,36 +42,33 @@ const transactionsIn = (categoryId: string) =>
           :class="expanded === total.category.id && 'rotate-180'"
         />
         <CategoryIcon :icon="total.category.icon" :color="total.category.color" :size="30" />
-        <span class="min-w-0 flex-1 truncate text-base">{{ total.category.name }}</span>
-        <span
-          class="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-mf-green px-1 text-xs font-medium text-white"
-          >{{ total.count }}</span
-        >
+        <!--
+          The count badge sits against the name, not out at the right margin.
+          Out there it reads as part of the amount; here it reads as part of the
+          category, which is what it counts.
+        -->
+        <span class="flex min-w-0 items-center gap-2">
+          <span class="truncate text-base">{{ total.category.name }}</span>
+          <span
+            class="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-mf-green px-1 text-xs font-medium text-white"
+            >{{ total.count }}</span
+          >
+        </span>
         <MoneyAmount
           :minor="Math.abs(total.totalMinor)"
           :currency="currency"
-          class="shrink-0 text-base font-medium text-mf-red-text"
+          class="ml-auto shrink-0 text-base font-medium text-mf-red-text"
         />
       </button>
 
-      <ul v-if="expanded === total.category.id" class="bg-mf-green-soft/15 px-4 pb-2">
+      <ul v-if="expanded === total.category.id" class="bg-mf-green-soft/15 px-4">
         <li
           v-for="row in transactionsIn(String(total.category.id))"
           :key="row.id"
-          class="flex items-center gap-3 border-t border-mf-muted/20 py-2 text-sm"
+          class="border-t border-mf-muted/20"
         >
-          <div class="min-w-0 flex-1">
-            <p class="truncate">{{ row.note || total.category.name }}</p>
-            <p class="text-xs text-mf-muted">{{ longDate(String(row.occurredOn)) }}</p>
-          </div>
-          <MoneyAmount
-            :minor="Math.abs(Number(row.amountMinor ?? 0))"
-            :currency="String(row.currency ?? currency)"
-            class="text-mf-red-text"
-          />
-          <button type="button" class="text-xs text-mf-green-dark" @click="$emit('edit', row)">
-            Edit
-          </button>
+          <!-- The category is the row above; repeating it on every line is noise. -->
+          <TransactionRow :row="row" hide-category @select="$emit('open', $event)" />
         </li>
       </ul>
     </li>

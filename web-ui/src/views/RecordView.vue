@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { LayoutGrid, Repeat } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { LayoutGrid, Repeat, Trash2 } from '@lucide/vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 
@@ -12,16 +12,25 @@ import DateRow from '@/components/monefy/DateRow.vue'
 import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
-import { display, initialState, press, total, type Key } from '@/lib/calculator'
+import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
-import { exponent, toMinor } from '@/lib/money'
+import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
+import { db } from '@/db'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
 
-const props = defineProps<{ kind: 'expense' | 'income' }>()
+/**
+ * New record, or an existing one.
+ *
+ * The same screen for both: the fields are identical, and editing is the one
+ * place people go to correct the thing they got wrong three taps ago — sending
+ * them somewhere that looks different for it would be strange. `id` present
+ * means edit; `kind` then comes from the stored row rather than the route.
+ */
+const props = defineProps<{ kind?: 'expense' | 'income'; id?: string }>()
 
 const router = useRouter()
 const route = useRoute()
@@ -39,6 +48,40 @@ const day = ref(today())
 const note = ref('')
 const showNewCategory = ref(false)
 const showAccounts = ref(false)
+
+/** The row being edited, once it has been read out of the replica. */
+const existing = ref<Row | null>(null)
+const editing = computed(() => props.id !== undefined)
+/** Set from the stored row when editing; the route param otherwise. */
+const kind = computed<'expense' | 'income'>(
+  () => (existing.value?.kind as 'expense' | 'income') ?? props.kind ?? 'expense',
+)
+/** While editing, the category the row already has — changed by the same grid. */
+const categoryId = ref<string | null>(null)
+
+/**
+ * Load the record being edited.
+ *
+ * Straight from IndexedDB, like everything else on this screen: opening an
+ * expense to fix its amount must work in a tunnel, and a spinner here would
+ * mean the app had suddenly acquired a network dependency for reading its own
+ * data.
+ */
+onMounted(async () => {
+  if (!props.id) return
+  const row = await db.txn.get(props.id)
+  if (!row || row.deleted) {
+    await router.replace('/')
+    return
+  }
+  existing.value = row
+  accountId.value = String(row.accountId ?? '')
+  categoryId.value = String(row.categoryId ?? '')
+  day.value = String(row.occurredOn ?? today())
+  note.value = String(row.note ?? '')
+  const major = Math.abs(Number(row.amountMinor ?? 0))
+  calc.value = typed(String(toMajor(major, String(row.currency ?? dashboard.baseCurrency))))
+})
 
 /**
  * The account paying for this, and therefore the currency of the amount.
@@ -63,7 +106,7 @@ const amount = computed(() => display(calc.value))
 const hasAmount = computed(() => total(calc.value) > 0)
 
 const categories = computed(() =>
-  props.kind === 'expense' ? taxonomy.expenseCategories : taxonomy.incomeCategories,
+  kind.value === 'expense' ? taxonomy.expenseCategories : taxonomy.incomeCategories,
 )
 
 /**
@@ -75,11 +118,14 @@ const categories = computed(() =>
  * tapping the wrong icon must not be a dead end.
  */
 const chosen = computed(() => {
-  const id = route.query.category
+  const id = categoryId.value ?? route.query.category
   return typeof id === 'string' ? categories.value.find((c) => c.id === id) : undefined
 })
 
-const title = computed(() => (props.kind === 'expense' ? 'New expense' : 'New income'))
+const title = computed(() => {
+  if (editing.value) return kind.value === 'expense' ? 'Edit expense' : 'Edit income'
+  return kind.value === 'expense' ? 'New expense' : 'New income'
+})
 
 function key(pressed: Key) {
   calc.value = press(calc.value, pressed, exponent(currency.value))
@@ -110,29 +156,54 @@ async function record(category: Row) {
   if (major <= 0) return
 
   const minor = toMinor(major, currency.value)
-  const id = await sync.write('txn', {
-    kind: props.kind,
-    occurredOn: day.value,
-    // Expenses are stored negative, the way the Monefy export writes them, so
-    // summing a month needs no knowledge of which kind a row is.
-    amountMinor: props.kind === 'expense' ? -minor : minor,
-    currency: currency.value,
-    categoryId: category.id,
-    accountId: account.value?.id ?? DEFAULT_ACCOUNT_ID,
-    note: note.value.trim(),
-  })
+  // An edit reuses the row id, so it travels as an ordinary last-write-wins op
+  // and merges with whatever another device did to the same record.
+  await sync.write(
+    'txn',
+    {
+      kind: kind.value,
+      occurredOn: day.value,
+      // Expenses are stored negative, the way the Monefy export writes them, so
+      // summing a month needs no knowledge of which kind a row is.
+      amountMinor: kind.value === 'expense' ? -minor : minor,
+      currency: currency.value,
+      categoryId: category.id,
+      accountId: account.value?.id ?? DEFAULT_ACCOUNT_ID,
+      note: note.value.trim(),
+    },
+    props.id,
+  )
 
-  // Deliberately silent. A toast here covers the bottom of the dashboard you
-  // were just returned to — including the record buttons — and the record is
-  // visible on the chart the moment you land, which is confirmation enough.
-  // Undo is the Delete on each row of the records sheet (swipe the balance up).
-  void id
+  // Deliberately silent when creating: a toast covers the bottom of the
+  // dashboard you were just returned to — including the record buttons — and
+  // the record is visible on the chart the moment you land.
+  if (editing.value) toast('Record updated')
 
   // Jump to the period the record belongs to, not whichever one happened to be
   // open — recording something dated last week and landing on a chart that does
   // not contain it looks exactly like the record was lost.
   dashboard.goToDay(day.value)
   await router.replace('/')
+}
+
+/**
+ * Delete, with an undo rather than a confirmation dialogue.
+ *
+ * A tombstone keeps the row, so restoring it is a write like any other — which
+ * makes undo both possible and honest. A modal asking "are you sure" before
+ * every delete trains people to dismiss it.
+ */
+async function remove() {
+  const row = existing.value
+  if (!props.id || !row) return
+  const body = { ...row } as Record<string, unknown>
+  for (const k of ['id', 'lamport', 'deviceId', 'updatedAt', 'deleted']) delete body[k]
+
+  await sync.remove('txn', props.id)
+  await router.replace('/')
+  toast('Record deleted', {
+    action: { label: 'Undo', onClick: () => void sync.write('txn', body, props.id) },
+  })
 }
 
 async function createCategory(input: {
@@ -156,6 +227,16 @@ function back() {
     <ScreenHeader :title="title" :on-back="back">
       <template #actions>
         <button
+          v-if="editing"
+          type="button"
+          class="grid size-11 place-items-center"
+          aria-label="Delete record"
+          @click="remove"
+        >
+          <Trash2 :size="22" :stroke-width="1.8" />
+        </button>
+        <button
+          v-else
           type="button"
           class="grid size-11 place-items-center"
           aria-label="Make recurring"

@@ -59,7 +59,8 @@ useEventListener(document, 'visibilitychange', () => {
 const recordIn = (category: Row) =>
   router.push({ path: '/new/expense', query: { category: String(category.id) } })
 
-const todo = (what: string) => () => console.info(`${what} lands in a later phase`)
+/** Tapping a record opens it for editing — the row itself is the control. */
+const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
 </script>
 
 <template>
@@ -125,7 +126,7 @@ const todo = (what: string) => () => console.info(`${what} lands in a later phas
           :totals="dashboard.byCategory"
           :rows="dashboard.rows"
           :currency="dashboard.baseCurrency"
-          @edit="todo('Editing a record')"
+          @open="openRecord"
         />
       </div>
     </SwipePager>
@@ -153,9 +154,9 @@ const todo = (what: string) => () => console.info(`${what} lands in a later phas
       <RecordsSheet
         v-if="showRecords"
         :rows="dashboard.rows"
-        :currency="dashboard.baseCurrency"
         :title="dashboard.label"
         @close="showRecords = false"
+        @open="openRecord"
       />
     </Transition>
 

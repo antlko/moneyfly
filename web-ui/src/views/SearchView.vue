@@ -3,15 +3,13 @@ import { ChevronLeft, Search, SlidersHorizontal } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import MoneyAmount from '@/components/monefy/MoneyAmount.vue'
+import TransactionRow from '@/components/monefy/TransactionRow.vue'
 import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
 import { toMinor } from '@/lib/money'
-import { longDate } from '@/lib/period'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useTaxonomyStore } from '@/stores/taxonomy'
-import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
 
 const taxonomy = useTaxonomyStore()
@@ -72,7 +70,8 @@ const totalMinor = computed(() =>
   results.value.reduce((sum, r) => sum + Number(r.amountMinor ?? 0), 0),
 )
 
-const categoryOf = (row: Row) => taxonomy.byId.get(String(row.categoryId ?? ''))
+/** Tapping a result opens it for editing — the row itself is the control. */
+const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
 
 function clear() {
   query.value = ''
@@ -188,30 +187,10 @@ function clear() {
     </p>
 
     <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]">
-      <ul class="divide-y divide-mf-muted/20">
-        <li v-for="row in results" :key="row.id" class="flex items-center gap-3 px-4 py-2.5">
-          <CategoryIcon :icon="categoryOf(row)?.icon" :color="categoryOf(row)?.color" :size="26" />
-          <div class="min-w-0 flex-1">
-            <p class="truncate text-sm">
-              {{
-                row.note || categoryOf(row)?.name || (row.kind === 'transfer' ? 'Transfer' : '—')
-              }}
-            </p>
-            <p class="text-xs text-mf-muted">{{ longDate(String(row.occurredOn)) }}</p>
-          </div>
-          <MoneyAmount
-            :minor="Number(row.amountMinor ?? 0)"
-            :currency="String(row.currency ?? dashboard.baseCurrency)"
-            class="text-sm font-medium"
-            :class="Number(row.amountMinor ?? 0) < 0 ? 'text-mf-red-text' : 'text-mf-green-dark'"
-          />
-          <button
-            type="button"
-            class="text-xs text-mf-red-text"
-            @click="sync.remove('txn', row.id)"
-          >
-            Delete
-          </button>
+      <!-- The same row as the dashboard: one design for a transaction, everywhere. -->
+      <ul class="divide-y divide-mf-muted/20 px-4">
+        <li v-for="row in results" :key="row.id">
+          <TransactionRow :row="row" @select="openRecord" />
         </li>
       </ul>
 
