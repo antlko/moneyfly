@@ -63,7 +63,7 @@ func (s *Server) wakeFX() {
 // five times must not hammer someone else's free API.
 func (s *Server) fxLoop() {
 	cfg := s.config()
-	if !cfg.FX.Enabled {
+	if !cfg.FX.On() {
 		slog.Info("fx: refresh disabled")
 		return
 	}

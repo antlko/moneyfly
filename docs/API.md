@@ -69,7 +69,7 @@ The protocol, and why it is shaped this way, is [SYNC.md](SYNC.md). All four req
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/sync/push` | `{deviceId, ops[]}` → `{accepted, rejected[], serverSeq, lamport}`. 413 above 1000 ops. |
+| `POST` | `/api/sync/push` | `{deviceId, ops[]}` → `{accepted, rejected[], serverSeq, lamport}`. `rejected` is `[]`, never `null`. 413 above 1000 ops. |
 | `GET` | `/api/sync/pull?since=N&limit=500&deviceId=…` | `{changes[], serverSeq, hasMore}`. **409** when the cursor predates the surviving journal — bootstrap instead. |
 | `GET` | `/api/sync/snapshot` | `{rows[], serverSeq, lamport}` — every live row, no tombstones. |
 | `GET` | `/api/sync/events` | SSE. `event: ready` once, then `event: changed` with `{seq, deviceId}`, plus a `: ping` comment every 25s. |
@@ -91,10 +91,15 @@ error** — the losing op is silently not applied, which is what makes retrying 
 structurally invalid op appears in `rejected`, and only that op: one bad row never costs a device the
 rest of its batch.
 
+**`rejected` is always an array, never `null`.** Nothing rejected is an empty list, not the absence
+of an answer. A nil Go slice marshals to `null`, the client's own type says the field is an array,
+and the first thing it does with it is read `.length` — so the happy path was the one that threw, and
+the app announced itself offline while every request returned 200.
+
 ## Exchange rates
 
-Read-only, and not scoped to a user — a rate is a fact about the world. Still behind the session
-cookie: an instance nobody is signed in to should answer nothing but `/api/health`.
+Not scoped to a user — a rate is a fact about the world. Reads and the one write are both behind the
+session cookie: an instance nobody is signed in to should answer nothing but `/api/health`.
 
 Rates are only ever stored **against EUR**. `X -> EUR` is the computed inverse and `USD -> HUF` is a
 cross rate through EUR, so there is no endpoint to ask for those directly; the client does that
@@ -123,11 +128,41 @@ silently freezing at last month's number.
 
 ### `GET /api/fx/rates?quote=HUF&from=&to=`
 
-One pair's history, ascending. `from` defaults to 90 days before `to`, `to` to today; both are
+One pair's history, ascending, **one row per date**: the rate that applies, chosen exactly as the
+server chooses it internally. `from` defaults to 90 days before `to`, `to` to today; both are
 `YYYY-MM-DD`. `base` defaults to `EUR` and is the only value that returns anything.
+
+One per date rather than every stored source, because the client cache is keyed on (quote, date) and
+can hold only one anyway — handing it several would let it keep whichever arrived last, and convert
+with a different rate from the one the server would use.
 
 A client pulls this so that a record dated last month is priced with last month's rate. Re-pricing
 old records at today's rate would make past totals move every time the app is opened.
+
+### `PUT /api/fx/rates`
+
+Record a rate by hand: "1 EUR is worth `rate` `quote`", on `asOf` (today if omitted).
+
+```json
+{ "quote": "HUF", "rate": "391.5", "asOf": "2026-08-05" }
+```
+
+Returns the stored rate, with `"source": "manual"`. Only `EUR`-based rates are accepted, exactly as
+for a provider — the inverse is computed and never stored, which is what makes it impossible to hold
+EUR→USD 1.14 and USD→EUR 0.88 at once. A rate that is not a positive decimal is `400`.
+
+It exists because the provider chain is not the whole world: a currency no free feed publishes, an
+internal rate a household has agreed, or the rate actually paid at a counter. None of those can be
+fetched, and without a way to enter one those records stay outside every total.
+
+**It overrides by ordinary means, not by privilege.** Same date, different source, and every lookup
+prefers `manual` within a date — so a provider rate published on a *later* day takes over again. This
+records what a rate was on a day, not a standing preference. For a currency nobody publishes, no
+later rate ever arrives and the entered one keeps applying.
+
+A hand-entered rate is never the yardstick for the refresher's plausibility check. Measuring a
+published rate against a typed one would let a single misplaced decimal point reject every real rate
+from then on.
 
 ### `GET /api/fx/currencies`
 

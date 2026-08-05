@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AlignJustify, ArrowDownWideNarrow } from '@lucide/vue'
-import { computed, ref, useTemplateRef } from 'vue'
+import { computed, ref } from 'vue'
 
 import MoneyAmount from './MoneyAmount.vue'
 
@@ -15,24 +15,45 @@ const emit = defineEmits<{ toggleView: []; toggleSort: []; open: [] }>()
 const negative = computed(() => props.balanceMinor < 0)
 
 /*
- * The whole row is a handle: swiping it up opens the period's records, which is
- * the gesture the reference uses. A tap on the pill does the same, so the
- * affordance is discoverable without knowing about it.
+ * The whole row is a handle, and the two gestures on it do the two things the
+ * row offers:
+ *
+ *   * **swipe up → switch view**, exactly what the `≡` button beside it does.
+ *     One action, two ways to reach it: the button for people who look, the
+ *     gesture for people who don't. Having the swipe do something the buttons
+ *     could not is what made it feel like a third, hidden feature.
+ *   * **tap → the period's records**, grouped by day.
  *
  * The drag is tracked, not merely detected, so the pill lifts with the finger —
  * a control that responds only after you let go gives no sign it heard you.
  */
-const row = useTemplateRef<HTMLElement>('row')
 const lift = ref(0)
 let startY = 0
 /** The pointer whose `pointerdown` we saw — `null` means nothing is pressed. */
 let activePointer: number | null = null
-let captured = false
+/** Set once this gesture has travelled far enough to be a swipe, not a tap. */
 let dragged = false
 
-/** Upward travel that counts as "open". */
-const OPEN_THRESHOLD = 20
+/** Upward travel that counts as a deliberate swipe. */
+const SWITCH_THRESHOLD = 20
 
+/**
+ * No `setPointerCapture` here, deliberately.
+ *
+ * It looks necessary — the finger leaves the row within a few pixels — but for
+ * touch it is not: the browser *already* captures a touch pointer implicitly to
+ * the element it landed on, so the events keep arriving whatever ends up under
+ * the finger. Taking capture on top of that bought nothing and cost three
+ * things: it revoked the descendant's implicit capture (whose
+ * `lostpointercapture` bubbles, which is what broke the pager), it made the
+ * release order matter, and it moved the click to the row so the button below
+ * had to be told to ignore its own.
+ *
+ * The row is `touch-action: none` instead. That is the honest way to say "this
+ * row's gestures are mine": iOS then never claims the drag half-way through and
+ * cancels it, which is what left the pill dead to both swipes and the tap after
+ * one.
+ */
 function onDown(e: PointerEvent) {
   if (!e.isPrimary) return
   // A mouse emits `pointermove` while hovering; without a recorded pointer and a
@@ -40,44 +61,47 @@ function onDown(e: PointerEvent) {
   if (e.pointerType !== 'touch' && e.button !== 0) return
   startY = e.clientY
   activePointer = e.pointerId
-  captured = false
   dragged = false
+  lift.value = 0
 }
 
 function onMove(e: PointerEvent) {
   if (activePointer !== e.pointerId) return
   // A button let go outside the window never delivers `pointerup`.
   if (e.pointerType !== 'touch' && e.buttons === 0) {
-    onUp(e)
+    onCancel()
     return
   }
   // Downward movement is ignored; there is nothing below to reveal.
   const up = startY - e.clientY
-  if (!captured && up > 6) {
-    // Capture is what makes this work at all on a phone: a swipe up leaves the
-    // row within a few pixels, and without it every later event goes to
-    // whatever is now under the finger — the gesture was dropped silently.
-    // Taking it only after real movement keeps taps on the buttons working,
-    // because a captured pointer delivers its click to the capturing element.
-    row.value?.setPointerCapture(e.pointerId)
-    captured = true
-    dragged = true
-  }
+  if (up > 6) dragged = true
   lift.value = Math.max(0, Math.min(56, up))
 }
 
 function onUp(e: PointerEvent) {
   if (activePointer !== e.pointerId) return
   activePointer = null
-  if (captured && row.value?.hasPointerCapture(e.pointerId)) {
-    row.value.releasePointerCapture(e.pointerId)
-  }
-  const opened = lift.value >= OPEN_THRESHOLD
+  const swiped = lift.value >= SWITCH_THRESHOLD
   lift.value = 0
-  if (opened) emit('open')
+  if (swiped) emit('toggleView')
 }
 
-/** A tap opens it too — but a drag has already decided, so do not fire twice. */
+/**
+ * A cancelled gesture does nothing at all — it must not act on the distance it
+ * happened to have travelled.
+ *
+ * `pointercancel` used to be wired to `onUp`, so a gesture the browser took away
+ * mid-drag still counted as a deliberate swipe. It also left `dragged` latched,
+ * and `dragged` is what suppresses the click — so the *next* honest tap was
+ * swallowed too, and the pill looked dead.
+ */
+function onCancel() {
+  activePointer = null
+  dragged = false
+  lift.value = 0
+}
+
+/** A tap opens the records. A swipe has already acted, so it must not fire too. */
 function onPillClick() {
   if (dragged) {
     dragged = false
@@ -89,12 +113,11 @@ function onPillClick() {
 
 <template>
   <div
-    ref="row"
-    class="flex shrink-0 touch-pan-x items-center gap-2 px-4"
+    class="flex shrink-0 touch-none items-center gap-2 px-4"
     @pointerdown="onDown"
     @pointermove="onMove"
     @pointerup="onUp"
-    @pointercancel="onUp"
+    @pointercancel="onCancel"
   >
     <button
       type="button"
@@ -113,7 +136,7 @@ function onPillClick() {
         transform: `translateY(${-lift}px)`,
         transition: lift ? '' : 'transform 160ms ease',
       }"
-      aria-label="Show records for this period"
+      aria-label="Show records for this period. Swipe up to switch view."
       @click="onPillClick"
     >
       <span class="text-base font-medium">Balance</span>

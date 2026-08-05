@@ -141,6 +141,11 @@ func (s *Server) routes() {
 	// answer nothing but /api/health.
 	app.Get("/api/fx/latest", authed, s.handleLatestRates)
 	app.Get("/api/fx/rates", authed, s.handleRateHistory)
+	// Writing one is the exception to "read-only": a provider chain cannot
+	// publish every currency anyone holds, and a rate nobody can supply leaves
+	// those records outside every total. Not per-user for the same reason the
+	// reads are not — a rate is a fact about the world, not about an account.
+	app.Put("/api/fx/rates", authed, s.handleSetRate)
 	app.Get("/api/fx/currencies", authed, s.handleCurrencies)
 
 	// Sync.

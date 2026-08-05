@@ -22,7 +22,7 @@ const has = (code: string) => props.enabled.includes(code)
 
 <template>
   <div
-    class="fixed inset-0 z-50 flex flex-col justify-end bg-black/30"
+    class="fixed inset-0 z-50 flex flex-col justify-end mf-scrim"
     @click.self="$emit('close')"
   >
     <section class="flex max-h-[80%] flex-col rounded-t-2xl bg-mf-bg">

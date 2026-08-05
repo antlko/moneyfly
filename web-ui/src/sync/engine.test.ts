@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { ApiError } from '@/api/http'
+import { ApiError, NetworkError } from '@/api/http'
 import { MoneyflyDB } from '@/db'
 import { SyncEngine, type Transport } from './engine'
 import { wins } from './lww'
@@ -27,7 +27,13 @@ class FakeServer implements Transport {
   private assertOnline() {
     // A transport failure, not an API error — the engine must treat these
     // differently, and only one of them means "the server said no".
-    if (!this.online) throw new TypeError('Failed to fetch')
+    //
+    // A `NetworkError` specifically, because that is what the real transport
+    // raises: `fetch` rejects with a `TypeError`, and the HTTP layer wraps it
+    // there, where it is the only thing that can have failed. Throwing a bare
+    // `TypeError` here would be a fake that is easier to satisfy than the thing
+    // it stands in for.
+    if (!this.online) throw new NetworkError(new TypeError('Failed to fetch'))
   }
 
   /** Lets a test make push fail in a specific way. */
@@ -170,6 +176,43 @@ describe('SyncEngine', () => {
     expect(seenByB).toEqual(seenByA)
   })
 
+  /**
+   * The full offline round trip, with real quantities on both sides.
+   *
+   * Two phones, both out of contact, both used. Neither has seen the other's
+   * work, and each is holding a queue of its own. When they come back the
+   * server has to end up with the union, and — the part that is easy to get
+   * wrong — each device has to *send* its queue and *receive* the other's in
+   * the same exchange, not one or the other.
+   */
+  it('merges what both devices recorded offline, in both directions', async () => {
+    const a = newDevice(server, 'dev-a')
+    const b = newDevice(server, 'dev-b')
+    await a.start('user-1')
+    await b.start('user-1')
+
+    server.online = false
+    for (const note of ['a coffee', 'a bread', 'a bus']) await a.write('txn', expense(note))
+    for (const note of ['b lunch', 'b petrol']) await b.write('txn', expense(note))
+    await settle(a, b)
+
+    // Nothing left, nothing lost: both queues are intact and both screens
+    // already show their own work.
+    expect(a.pending.value).toBe(3)
+    expect(b.pending.value).toBe(2)
+    expect(await live(a)).toHaveLength(3)
+    expect(await live(b)).toHaveLength(2)
+
+    server.online = true
+    await settle(a, b, a, b)
+
+    const everything = ['a bread', 'a bus', 'a coffee', 'b lunch', 'b petrol']
+    expect((await live(a)).map((r) => r.note).sort()).toEqual(everything)
+    expect((await live(b)).map((r) => r.note).sort()).toEqual(everything)
+    expect(a.pending.value).toBe(0)
+    expect(b.pending.value).toBe(0)
+  })
+
   // The conflict case: one row, two edits, no connection. Both sides must end up
   // showing the same winner — disagreeing silently is the failure this whole
   // design exists to prevent.
@@ -285,12 +328,83 @@ describe('SyncEngine', () => {
     await a.start('user-1')
 
     server.pushImpl = () => {
-      throw new TypeError('Failed to fetch')
+      throw new NetworkError(new TypeError('Failed to fetch'))
     }
     await a.write('txn', expense('one'))
     await settle(a)
 
     expect(a.state.value).toBe('offline')
+  })
+
+  /**
+   * A bare `TypeError` is a bug on this device, not a dead connection.
+   *
+   * It was classified as offline because that is what `fetch` rejects with — but
+   * so does reading a property off a null, and this exact case shipped: the
+   * server sent `"rejected": null`, `res.rejected.length` threw, and the app
+   * announced itself offline while every request was returning 200.
+   */
+  it('does not mistake a local TypeError for a dead connection', async () => {
+    const a = newDevice(server, 'dev-a')
+    await a.start('user-1')
+
+    server.pushImpl = () => {
+      throw new TypeError("Cannot read properties of null (reading 'length')")
+    }
+    await a.write('txn', expense('one'))
+    await settle(a)
+
+    expect(a.state.value).toBe('error')
+  })
+
+  /**
+   * The response that caused it: `rejected` absent rather than empty.
+   *
+   * "Nothing was rejected" has to be as ordinary as it sounds. An older server
+   * still sends `null` for it, and a client that only works against a server of
+   * exactly its own version is not offline-first, it is fragile.
+   */
+  it('treats a push response with no rejection list as a success', async () => {
+    const a = newDevice(server, 'dev-a')
+    await a.start('user-1')
+
+    const push = server.push.bind(server)
+    server.push = async (deviceId, ops) => {
+      const res = await push(deviceId, ops)
+      return { ...res, rejected: undefined as unknown as [] }
+    }
+
+    await a.write('txn', expense('one'))
+    await settle(a)
+
+    expect(a.state.value).toBe('idle')
+    expect(a.pending.value).toBe(0)
+  })
+
+  /**
+   * Sending and receiving are independent errands that share a trip.
+   *
+   * Chaining them meant one op the server would not take stopped this device
+   * receiving anything at all — a phone sitting there missing everything entered
+   * on a laptop, with nothing on screen to explain it.
+   */
+  it('still pulls when the push fails', async () => {
+    const a = newDevice(server, 'dev-a')
+    const b = newDevice(server, 'dev-b')
+    await a.start('user-1')
+    await b.start('user-1')
+
+    await b.write('txn', expense('from the laptop'))
+    await settle(b)
+
+    server.pushImpl = () => {
+      throw new ApiError(500, 'nope')
+    }
+    await a.write('txn', expense('stuck in the outbox'))
+    await settle(a)
+
+    expect((await live(a)).map((r) => r.note)).toContain('from the laptop')
+    expect(a.pending.value).toBe(1)
   })
 
   it('reports pending work while offline', async () => {

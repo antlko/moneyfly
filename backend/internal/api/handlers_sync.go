@@ -24,10 +24,26 @@ type pushRequest struct {
 }
 
 type pushResponse struct {
-	Accepted  int                   `json:"accepted"`
+	Accepted int `json:"accepted"`
+	// Rejected is never null on the wire — see rejections(). A nil Go slice
+	// marshals to JSON `null`, and a client reading `res.rejected.length` on the
+	// happy path then throws on every successful push.
 	Rejected  []syncproto.Rejection `json:"rejected"`
 	ServerSeq int64                 `json:"serverSeq"`
 	Lamport   int64                 `json:"lamport"`
+}
+
+// rejections renders a rejection list as an array rather than null.
+//
+// "Nothing was rejected" is an empty list, not the absence of an answer, and the
+// difference is not cosmetic: `null` here cost a release's worth of "the app
+// says it is offline" reports, because the client's own type said the field was
+// an array and the first thing it did with it was read `.length`.
+func rejections(in []syncproto.Rejection) []syncproto.Rejection {
+	if in == nil {
+		return []syncproto.Rejection{}
+	}
+	return in
 }
 
 // handlePush applies a batch of operations.
@@ -70,7 +86,7 @@ func (s *Server) handlePush(c fiber.Ctx) error {
 
 	return c.JSON(pushResponse{
 		Accepted:  res.Accepted,
-		Rejected:  res.Rejected,
+		Rejected:  rejections(res.Rejected),
 		ServerSeq: res.ServerSeq,
 		Lamport:   res.Lamport,
 	})

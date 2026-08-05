@@ -21,13 +21,41 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The request never reached a server — a tunnel, a dead host, aeroplane mode.
+ *
+ * Declared here, at the only place that can actually tell, because callers
+ * cannot. `fetch` signals a transport failure by rejecting with a `TypeError`,
+ * and a `TypeError` is also what a plain bug produces — reading `.length` off a
+ * null, say. Deciding by type further up therefore filed local defects as
+ * "offline", which sends whoever is debugging to check a connection that was
+ * never the problem. That shipped: one null field in a response had the app
+ * reporting itself offline while every request returned 200.
+ *
+ * So the distinction is made where the evidence is: only a rejected `fetch` call
+ * becomes one of these.
+ */
+export class NetworkError extends Error {
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause))
+    this.name = 'NetworkError'
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch (e) {
+    // Everything inside this try is one call, so there is nothing else here that
+    // could throw and be mislabelled.
+    throw new NetworkError(e)
+  }
 
   if (!res.ok) {
     // The server renders every error as {"error": "..."} via its central
@@ -146,6 +174,21 @@ export const fxHistory = (quote: string, from: string, to: string) =>
     `/api/fx/rates?quote=${encodeURIComponent(quote)}` +
       `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
   )
+
+/**
+ * Record a rate by hand: "1 EUR is worth `rate` `quote`", on `asOf` (today if
+ * omitted).
+ *
+ * `rate` is a decimal *string* for the same reason the server sends one — a
+ * `Number` would put it through a binary float before it ever reached a
+ * multiplication.
+ *
+ * It overrides whatever a provider published for that date, and a provider rate
+ * published on a later date takes over again: this records what a rate was on a
+ * day, not a standing preference.
+ */
+export const fxSetRate = (quote: string, rate: string, asOf?: string) =>
+  api.put<Rate>('/api/fx/rates', { quote, rate, asOf })
 
 /** Where to send the browser to start an OIDC flow. Not a fetch — a navigation. */
 export function oidcStartUrl(providerId: string, opts: { link?: boolean; redirect?: string } = {}) {

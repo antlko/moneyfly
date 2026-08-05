@@ -174,7 +174,7 @@ function closeForm() {
     <Transition name="mf-sheet">
       <div
         v-if="open"
-        class="fixed inset-0 z-50 flex items-end bg-black/30"
+        class="fixed inset-0 z-50 flex items-end mf-scrim"
         @click.self="closeForm"
       >
         <form

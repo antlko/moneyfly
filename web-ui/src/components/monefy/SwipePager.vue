@@ -1,7 +1,20 @@
 <script setup lang="ts">
 import { nextTick, onScopeDispose, ref } from 'vue'
 
-const props = withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false })
+const props = withDefaults(
+  defineProps<{
+    disabled?: boolean
+    /**
+     * Whether the content inside can scroll vertically.
+     *
+     * It decides `touch-action`, and that decision is the difference between a
+     * swipe that works on a phone and one that jitters and springs back. See the
+     * note on `touch-action` below.
+     */
+    verticalScroll?: boolean
+  }>(),
+  { disabled: false, verticalScroll: false },
+)
 const emit = defineEmits<{ prev: []; next: [] }>()
 
 /**
@@ -13,9 +26,22 @@ const emit = defineEmits<{ prev: []; next: [] }>()
  * bug — the screen contents change with no indication that anything was
  * dragged.
  *
- * `touch-action: pan-y` is what makes this coexist with the scrolling list: the
- * browser keeps vertical scrolling to itself and only horizontal gestures reach
- * these handlers.
+ * **`touch-action` is set to exactly what the content needs, and no more.**
+ *
+ * `pan-y` says "the browser may pan this vertically", and iOS takes that
+ * seriously: it withholds judgement at the start of every gesture and, the
+ * moment a real finger's inevitable vertical wobble looks like the beginning of
+ * a scroll, it claims the gesture and sends `pointercancel`. On screen that is a
+ * swipe that follows the finger for a few pixels and then lets go — which is
+ * exactly how it was described, and which never happens with a mouse because a
+ * mouse drag has no ambiguity to resolve.
+ *
+ * So `pan-y` is used only when something inside actually scrolls (the category
+ * list). Over the donut, where nothing does, the value is `none`: the gesture is
+ * ours from the first pixel and there is nothing for iOS to arbitrate.
+ *
+ * A cancellation that arrives anyway is honoured rather than discarded — see
+ * `onPointerCancel`.
  *
  * **A pointer gesture must track which pointer is down, and stay unconvinced
  * until it is.** A mouse emits `pointermove` while merely hovering, so handlers
@@ -23,6 +49,12 @@ const emit = defineEmits<{ prev: []; next: [] }>()
  * follows the cursor, `setPointerCapture` runs with no button held — which then
  * steals every click from the children — and the release flips the period. That
  * bug shipped once; the `activePointer` bookkeeping below is what prevents it.
+ *
+ * **And a pointer gesture must not believe every `lostpointercapture` it sees.**
+ * Touch pointers are implicitly captured by the element they land on, so taking
+ * capture here revokes a descendant's — which reports it, and the event bubbles.
+ * See `onLostCapture`: getting that wrong is invisible with a mouse and breaks
+ * the gesture entirely on a phone.
  */
 const SLIDE_MS = 190
 /** Fraction of the width that commits the gesture. */
@@ -90,10 +122,20 @@ function onPointerMove(e: PointerEvent) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
     axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
     if (axis === 'y') return
-    // Capture only once this is definitely a drag. Capturing on pointerdown
-    // would swallow the click on every category icon inside the pager, because
-    // the click is then delivered to the capturing element instead.
-    root.value?.setPointerCapture(e.pointerId)
+    // Capture the *mouse*, never the finger.
+    //
+    // A mouse that leaves this element mid-drag stops delivering events, so it
+    // genuinely needs capturing. A touch pointer does not: the browser already
+    // captured it implicitly to whatever it landed on, and those events bubble
+    // up here regardless of what ends up under the finger.
+    //
+    // Taking it anyway is not free. While an element holds capture, the events
+    // that follow — including the next tap's — are retargeted to it rather than
+    // to what was actually pressed, which is why a button pressed straight after
+    // a swipe appeared to do nothing until it was pressed a second time. It is
+    // the same trap that made `lostpointercapture` cancel every swipe, and the
+    // same one already removed from `BalancePill`.
+    if (e.pointerType !== 'touch') root.value?.setPointerCapture(e.pointerId)
   }
   offset.value = dx
 }
@@ -118,7 +160,14 @@ async function onPointerUp(e: PointerEvent) {
 
   if (!wasDrag || busy.value || props.disabled) return
 
-  const dx = e.clientX - startX
+  await settle(e.clientX - startX)
+}
+
+/**
+ * Finish a gesture from however far it got: commit past the threshold, spring
+ * back below it.
+ */
+async function settle(dx: number) {
   const threshold = Math.min(width * COMMIT_RATIO, COMMIT_MAX_PX)
   if (Math.abs(dx) < threshold) {
     await animateTo(0)
@@ -128,13 +177,45 @@ async function onPointerUp(e: PointerEvent) {
   await commit(dx < 0 ? 1 : -1)
 }
 
-/** Abandon the gesture and spring back — cancellation, or a button let go. */
+/**
+ * A cancelled gesture is finished on its merits, not thrown away.
+ *
+ * `pointercancel` does not mean "the user changed their mind" — it means the
+ * browser has decided to handle the gesture itself, and it can arrive halfway
+ * through a perfectly deliberate swipe. Springing back unconditionally is what
+ * produced the complaint that the swipe "jitters, as if it gets released": the
+ * content follows the finger, iOS claims the gesture, and everything snaps home
+ * with the period unchanged.
+ *
+ * Past the commit threshold the intent is not in doubt, so it is honoured. Below
+ * it, springing back is still right.
+ */
 function onPointerCancel(e: PointerEvent) {
   if (!tracking(e)) return
   const wasDrag = axis === 'x'
+  const dx = offset.value
   reset()
   releaseCapture(e)
-  if (wasDrag) void animateTo(0)
+  if (wasDrag) void settle(dx)
+}
+
+/**
+ * Losing capture ends the gesture — but only when it was *ours* to lose.
+ *
+ * This is the whole reason swiping worked with a mouse and did nothing under
+ * touch. A touch pointer is **implicitly captured** by whatever element it lands
+ * on, so the moment this component calls `setPointerCapture` on itself, that
+ * descendant loses its implicit capture and fires `lostpointercapture` — which
+ * bubbles, straight back into this handler, one event after the drag began.
+ * Every swipe cancelled itself on the frame it started. A mouse takes no
+ * implicit capture, so nothing fired and nothing looked wrong.
+ *
+ * `e.target === root` is the whole fix: an ancestor taking over says nothing
+ * about our gesture, and the browser revoking *our* capture ends it.
+ */
+function onLostCapture(e: PointerEvent) {
+  if (e.target !== root.value) return
+  onPointerCancel(e)
 }
 
 /**
@@ -190,12 +271,13 @@ function animateTo(target: number): Promise<void> {
 <template>
   <div
     ref="root"
-    class="min-h-0 flex-1 overflow-hidden touch-pan-y"
+    class="min-h-0 flex-1 overflow-hidden"
+    :class="verticalScroll ? 'touch-pan-y' : 'touch-none'"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
-    @lostpointercapture="onPointerCancel"
+    @lostpointercapture="onLostCapture"
   >
     <div
       class="flex h-full flex-col"

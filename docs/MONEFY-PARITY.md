@@ -84,6 +84,24 @@ and the chart readable and simply does not draw what does not fit (its own scree
 of nineteen categories). The ring's outer edge *is* the space allotted to it, and its hole is 60% of
 that — a thinner ring reads as a much smaller chart even when the space is identical.
 
+**The target cell size is what sets the chart's diameter, indirectly and strongly**, so it is tuned
+against the reference rather than picked. The donut fills the gap between the icon *centres*: a wider
+cell means fewer columns, a ring of icons standing further in from the edges, and a smaller chart. At
+150×155 a 390pt phone got three columns, the icons sat a seventh of the screen in from each edge, and
+the donut came out a third smaller than the reference's. At 104×118 it gets four columns — the
+reference's own density — and these measurements, taken on an iPhone 16 Pro against a Monefy
+screenshot of the same device:
+
+| | before | after | reference |
+| --- | --- | --- | --- |
+| donut diameter | 152pt | 219pt | ~200pt |
+| icon centre from screen edge | 87pt | 50pt | ~43pt |
+| columns | 3 | 4 | 4 |
+
+The donut's box carries **no horizontal padding**, for the same reason: the icon ring is measured from
+it, so a point of padding there pushes the categories in from the edges and takes the same off the
+diameter twice over.
+
 This is worth stating plainly because the obvious implementations are all wrong. Any *curve* — a
 circle, a superellipse, a rounded rectangle — spaces icons by angle, so the gaps stretch and squeeze
 as the curve turns and the result looks scattered no matter how the maths is tuned. Only a grid gives
@@ -113,9 +131,16 @@ as a bug even when the resulting state is right.
 period is negative. `⇩🏷` on the right controls sort order. In donut mode a second `≡` appears on the
 right of the pill (the screenshot shows the pill flanked by two of them).
 
-**The balance pill is also a handle.** Swiping it up — or tapping it — opens a panel listing every
-record in the period, grouped by day, newest first. Dragging it back down, or tapping outside, closes
-it.
+**The balance pill is also a handle, and its two gestures do the two things the row offers.**
+
+* **Tap** — opens a panel listing every record in the period, grouped by day, newest first. Dragging
+  it back down, or tapping outside, closes it.
+* **Swipe up** — switches between donut and list: exactly what the `≡` beside it does. One action,
+  two ways to reach it — the button for people who look for one, the gesture for people who don't.
+
+This is a deliberate departure from the reference, where the swipe also opens the records panel. A
+gesture that reaches something no button reaches reads as a third, hidden feature; a gesture that
+doubles a visible control teaches itself.
 
 That panel must not look like a different application. It was once a short bottom sheet with its own
 row design and a text `Close` button, so the gesture landed you somewhere unrecognisable — the
@@ -291,21 +316,79 @@ estimates and may be corrected — but only there, never in a component.
 Plus a 20-entry `cat-*` palette for categories. A category row stores the palette **key**, never a
 hex value.
 
+### The app frame
+
+The shell is `position: fixed; inset: 0` on `#app`, with `overflow: hidden` on `html` and `body`.
+Not `height: 100%`, which is what it was: on iOS that resolves against the *large* viewport — the one
+with the URL bar retracted — so the document came out taller than the screen and the whole app
+scrolled. The header slid up under the clock, the record buttons hung off the bottom, and every
+vertical gesture competed with a page scroll that should not exist. Inner lists scroll; nothing else
+does.
+
+Three more things follow from being an app rather than a document:
+
+* **`apple-mobile-web-app-status-bar-style: black-translucent`.** The only value that lets the page
+  paint under the status bar, and the only one that makes `env(safe-area-inset-top)` report a real
+  number — with `default` the header's `pt-safe-t` pads nothing and the app sits in a box below the
+  clock. The header is green with white text already, which is what the status bar's glyphs land on.
+* **Installed, it does not pinch-zoom** (`touch-action: pan-x pan-y` under
+  `@media (display-mode: standalone)`). Zoom leaves a phone-sized layout permanently wider than the
+  screen — controls cut in half at both edges, month labels clipped, the frame pannable — and a
+  standalone window has no chrome and no way to ask for 100% back. A browser tab keeps zoom.
+* **Text is not selectable under `pointer: coarse`.** A drag starting on a label became a selection,
+  so the swipe never reached the pager. Desktop keeps its text, inputs keep theirs everywhere.
+
+**After the keyboard closes, the shell is put back** (`focusout` → `window.scrollTo(0, 0)`, in
+`main.ts`). iOS scrolls the visual viewport to reveal a focused field and does not always undo it;
+a fixed shell is measured against the layout viewport, so what is left is a header slid up under the
+clock — permanently, until reload. It is the state a phone lands in immediately after signing in.
+
+### Record buttons
+
+The largest controls on the screen — `6rem` across, about a quarter of a phone's width, matching the
+reference. They are aimed at with a thumb, often without looking, and they are what the app is for.
+
+**The clearance below them is the home indicator's, not the full bottom inset** (`--spacing-fab-b` =
+`max(0.5rem, safe-area-inset-bottom − 0.75rem)`). The inset is sized for a scrolling document whose
+content must clear the indicator entirely; spent in full it put a visible band of empty background
+under the buttons when installed, while the same screen in a browser tab — where the inset is zero —
+sat correctly. Every point they sit higher is a point further from the thumb.
+
+They also carry a small gap *above*, so they read as their own row rather than as part of the balance
+pill.
+
 ### Motion
 
-Two tokens in the same block, and every panel in the app uses them, so nothing reads as belonging to
+Four tokens in the same block, and every panel in the app uses them, so nothing reads as belonging to
 a different application:
 
-| Token | Value |
-| --- | --- |
-| `--mf-ease` | `cubic-bezier(0.22, 0.61, 0.36, 1)` |
-| `--mf-duration` | `200ms` |
+| Token | Value | Used by |
+| --- | --- | --- |
+| `--mf-ease` | `cubic-bezier(0.22, 0.61, 0.36, 1)` | fades, page changes, scrims |
+| `--mf-duration` | `200ms` | fades, page changes |
+| `--mf-ease-panel` | `cubic-bezier(0.32, 0.72, 0, 1)` | anything that travels |
+| `--mf-duration-panel` | `280ms` | anything that travels |
 
-The curve decelerates hard at the end, which is what makes a sheet look like it settled rather than
-stopped. Five named transitions build on them — `mf-fade`, `mf-sheet`, `mf-drawer-l`, `mf-drawer-r`,
+Both curves decelerate hard at the end, which is what makes a sheet look like it settled rather than
+stopped; the panel curve more so. A drawer crosses most of the screen where a fade crosses nothing,
+and at 200ms that distance is covered fast enough to read as a jump with a smear on it.
+
+Five named transitions build on them — `mf-fade`, `mf-sheet`, `mf-drawer-l`, `mf-drawer-r`,
 `mf-page` — and they are applied by wrapping the `v-if` **at the call site**, because a `v-if` on its
-own cannot animate a departure and the departure is the half people notice. All of it collapses under
-`prefers-reduced-motion: reduce`; none of it is load-bearing.
+own cannot animate a departure and the departure is the half people notice.
+
+**An overlay is two things moving at once, and they must not move the same way: the scrim darkens,
+the panel travels at full opacity.** The dimming is animated as `background-color` on the overlay
+root, not as its `opacity` — opacity applies to the whole subtree, so the panel used to fade up along
+with the scrim behind it and arrived as a transparent ghost of itself, legible only once it had
+stopped. That is what "the animation isn't smooth" looks like from the outside; nothing is dropping
+frames, the panel is simply never solid while it is in motion. Every overlay root carries
+`bg-black/30`, so no component needs its own scrim element.
+
+All of it collapses under `prefers-reduced-motion: reduce`; none of it is load-bearing. That includes
+the case where the preference is set by accident — macOS Accessibility → Display → Reduce motion, or
+Chrome DevTools' rendering emulation — in which case every panel in the app appears instantly and
+nothing here is broken.
 
 ---
 
@@ -322,6 +405,13 @@ than it was. The transaction row shows the original amount either way.
 The `Currencies` screen in the right drawer lists each cached rate with its age. Age is the point: a
 provider that stops publishing raises no error anywhere, it just stops moving, and every total
 quietly keeps using an old number.
+
+**The rate is a button, including when it reads "no rate yet — tap to set".** Tapping it opens a
+sheet phrased the way the board at an exchange desk is phrased — `1 EUR = ___ HUF` — and dated,
+defaulting to today. It is the same "no rate yet" that the dashboard banner counts, so it is the
+moment someone wants to type one in; hiding the way out of it behind a separate control would leave
+the screen stating a problem and offering nothing to do about it. See `PUT /api/fx/rates` in
+docs/API.md for what a hand-entered rate then overrides, and for how long.
 
 ---
 

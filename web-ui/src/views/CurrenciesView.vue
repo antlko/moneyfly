@@ -3,7 +3,9 @@ import { Plus, RefreshCw, X } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 
+import * as http from '@/api/http'
 import CurrencySheet from '@/components/monefy/CurrencySheet.vue'
+import RateSheet from '@/components/monefy/RateSheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { currencyName } from '@/lib/currencies'
 import { STORAGE_BASE, type Ratio } from '@/lib/fx'
@@ -85,6 +87,47 @@ const asDecimal = (rate: Ratio) =>
 const rateFor = (code: string) => fx.latest.find((r) => r.quote === code)
 
 /**
+ * Enter a rate by hand.
+ *
+ * The tap target is the rate itself, including when it reads "no rate yet" —
+ * that is the moment someone wants this, and hiding the way out of it behind a
+ * separate control would leave the screen saying "there is no rate" while
+ * offering nothing to do about it.
+ */
+const editing = ref<string | null>(null)
+
+/** The rate in force for a code, as the decimal string the sheet edits. */
+function currentRate(code: string): string | undefined {
+  const held = rateFor(code)
+  if (!held) return undefined
+  return String(Number(held.rate.num) / Number(held.rate.den))
+}
+
+/*
+ * A named handler, not `saveRate(editing!, $event)` in the template: a handler
+ * carrying a TypeScript assertion does not compile, and `vue-tsc` does not catch
+ * it — the dev server does, at request time, by rendering a blank page.
+ */
+function onSaveRate(entry: { rate: string; asOf: string }) {
+  const code = editing.value
+  if (code) void saveRate(code, entry)
+}
+
+async function saveRate(code: string, { rate, asOf }: { rate: string; asOf: string }) {
+  editing.value = null
+  try {
+    await http.fxSetRate(code, rate, asOf)
+  } catch (e) {
+    toast(e instanceof Error ? `Could not save the rate: ${e.message}` : 'Could not save the rate')
+    return
+  }
+  // Pull it straight back into the local cache, because that — not the server —
+  // is what every total on the dashboard reads.
+  await fx.addQuote(code, dashboard.baseCurrency)
+  toast(`1 ${STORAGE_BASE} = ${rate} ${code}`)
+}
+
+/**
  * How stale is too stale. Rates do not move at weekends, so a couple of days is
  * normal; a week means the refresh has been failing and nobody noticed, which is
  * the failure this screen exists to surface.
@@ -147,25 +190,38 @@ const STALE_AFTER_DAYS = 5
             <div v-if="code === dashboard.baseCurrency" class="shrink-0 text-sm text-mf-muted">
               base
             </div>
-            <div v-else-if="rateFor(code)" class="shrink-0 text-right">
-              <p class="text-sm">{{ asDecimal(rateFor(code)!.rate) }}</p>
-              <!--
-                The age is the point. A dead provider raises no error anywhere —
-                it just stops moving, and every total quietly keeps using an old
-                number.
-              -->
-              <p
-                class="text-xs"
-                :class="
-                  rateFor(code)!.ageDays >= STALE_AFTER_DAYS ? 'text-mf-red-text' : 'text-mf-muted'
-                "
-              >
-                {{ rateFor(code)!.ageDays === 0 ? 'today' : `${rateFor(code)!.ageDays}d old` }}
-              </p>
-            </div>
-            <div v-else class="shrink-0 text-right text-xs text-mf-muted">
-              {{ fx.refreshing ? 'fetching…' : 'no rate yet' }}
-            </div>
+            <!--
+              The rate is the button. "No rate yet" is precisely when someone
+              wants to type one, so the way to do that has to be on the words
+              that say there isn't one — not behind a control somewhere else.
+            -->
+            <button
+              v-else
+              type="button"
+              class="shrink-0 rounded-lg px-2 py-1 text-right active:bg-mf-green-soft/30"
+              :aria-label="`Set the ${code} rate`"
+              @click="editing = code"
+            >
+              <template v-if="rateFor(code)">
+                <span class="block text-sm">{{ asDecimal(rateFor(code)!.rate) }}</span>
+                <!--
+                  The age is the point. A dead provider raises no error anywhere —
+                  it just stops moving, and every total quietly keeps using an old
+                  number.
+                -->
+                <span
+                  class="block text-xs"
+                  :class="
+                    rateFor(code)!.ageDays >= STALE_AFTER_DAYS ? 'text-mf-red-text' : 'text-mf-muted'
+                  "
+                >
+                  {{ rateFor(code)!.ageDays === 0 ? 'today' : `${rateFor(code)!.ageDays}d old` }}
+                </span>
+              </template>
+              <span v-else class="block text-xs text-mf-muted">
+                {{ fx.refreshing ? 'fetching…' : 'no rate yet — tap to set' }}
+              </span>
+            </button>
 
             <button
               v-if="code !== dashboard.baseCurrency"
@@ -197,6 +253,17 @@ const STALE_AFTER_DAYS = 5
         :enabled="enabled"
         @select="add"
         @close="showPicker = false"
+      />
+    </Transition>
+
+    <Transition name="mf-sheet">
+      <RateSheet
+        v-if="editing"
+        :key="editing"
+        :code="editing"
+        :current="currentRate(editing)"
+        @save="onSaveRate"
+        @close="editing = null"
       />
     </Transition>
   </div>

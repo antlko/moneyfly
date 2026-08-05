@@ -27,6 +27,11 @@ const (
 	DefaultSessionTTLDays         = 365
 	DefaultChangeLogRetentionDays = 90
 	DefaultFXRefreshAt            = "04:00"
+	// DefaultFXEnabled is on. Conversion is not an opt-in extra: a record in a
+	// currency that cannot be converted is left out of every total on the
+	// dashboard, so an instance that fetches no rates is one that quietly
+	// under-reports what was spent.
+	DefaultFXEnabled = true
 )
 
 // FXProviders are the provider ids `fx.providers` accepts, in the order a fresh
@@ -72,11 +77,21 @@ type Sync struct {
 }
 
 // FX configures daily exchange-rate refresh.
+//
+// Enabled is a *pointer* so that "absent" and "false" are different answers. A
+// plain bool cannot tell them apart, and its zero value is `false` — which meant
+// that an instance with no config.yaml at all (the documented, supported way to
+// run this: `docker run` with an empty volume) silently never fetched a single
+// rate. Every foreign-currency record then sat outside the totals forever,
+// captioned "no exchange rate yet", with nothing anywhere to say why.
 type FX struct {
-	Enabled   bool     `yaml:"enabled"`
+	Enabled   *bool    `yaml:"enabled"`
 	RefreshAt string   `yaml:"refresh_at"`
 	Providers []string `yaml:"providers"`
 }
+
+// On reports whether the refresh loop should run. Absent means on.
+func (f FX) On() bool { return f.Enabled == nil || *f.Enabled }
 
 // RefreshHourMinute parses RefreshAt into a wall-clock time of day.
 func (f FX) RefreshHourMinute() (hour, minute int, err error) {
@@ -101,7 +116,7 @@ func (f FX) validate() error {
 				id, strings.Join(FXProviders, ", "))
 		}
 	}
-	if f.Enabled && len(f.Providers) == 0 {
+	if f.On() && len(f.Providers) == 0 {
 		return fmt.Errorf("fx.enabled is true but fx.providers is empty")
 	}
 	return nil
@@ -180,6 +195,10 @@ func (c *Config) normalize() {
 	}
 	if c.Sync.ChangeLogRetentionDays == 0 {
 		c.Sync.ChangeLogRetentionDays = DefaultChangeLogRetentionDays
+	}
+	if c.FX.Enabled == nil {
+		on := DefaultFXEnabled
+		c.FX.Enabled = &on
 	}
 	if c.FX.RefreshAt == "" {
 		c.FX.RefreshAt = DefaultFXRefreshAt

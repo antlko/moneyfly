@@ -47,4 +47,17 @@ export const SETTING = {
    * a synced setting so adding a currency on the phone offers it on the laptop.
    */
   currencies: 'currency.enabled',
+  /**
+   * The account the last record was written against.
+   *
+   * Spending is habitual: the account you paid from an hour ago is
+   * overwhelmingly the one you are about to pay from again. Defaulting to the
+   * *first* account instead meant anyone whose everyday wallet was not first in
+   * the list re-picked it on every single record — and picking it is a sheet, a
+   * scroll and a tap, on the screen whose whole promise is three taps total.
+   *
+   * Synced like any other preference, so the phone and the laptop agree on
+   * which account is "current" rather than each keeping its own idea.
+   */
+  lastAccount: 'record.lastAccount',
 } as const

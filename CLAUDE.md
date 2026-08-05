@@ -130,6 +130,11 @@ running the dev servers.
 - **Defaults live in one place** — `internal/config` exports them (`DefaultCurrency`,
   `DefaultChangeLogRetentionDays`, …) precisely so API fallbacks cannot drift. Don't re-hardcode a
   default at a use site.
+- **A config field that defaults to *on* must be a `*bool`.** A plain bool cannot tell "absent" from
+  "false", and its zero value is the wrong answer: `fx.enabled` was one, so an instance with no
+  `config.yaml` — the documented bare `docker run` — silently never fetched a rate, and every
+  foreign-currency record sat outside every total under a "no exchange rate yet" caption. `normalize()`
+  fills the pointer, and callers ask `cfg.FX.On()`.
 - **Fiber handlers** return `fiber.NewError(code, msg)` for errors (the central `errorHandler` renders
   `{"error": msg}` — the shape the frontend's `ApiError` parses); success via `c.JSON`.
 - **Synced rows are JSON plus generated columns.** Every synced table stores the row body in a `data`
@@ -141,6 +146,26 @@ running the dev servers.
   crossing the window as a drag — and if it then takes `setPointerCapture`, it steals every click
   from its children. `SwipePager` and `BalancePill` show the shape: record `pointerdown`'s
   `pointerId`, ignore events without it, and bail when a mouse comes back with `buttons === 0`.
+- **The mobile shell is `position: fixed; inset: 0`, not `height: 100%`.** On iOS `100%` resolves
+  against the *large* viewport, so the document is taller than the screen and the whole app scrolls —
+  header under the clock, record buttons off the bottom, every vertical gesture fighting a page
+  scroll. See docs/MONEFY-PARITY.md §"The app frame" for the rest of the PWA rules that go with it
+  (`black-translucent` status bar, no pinch-zoom when installed, no text selection under
+  `pointer: coarse`, and putting the shell back after the keyboard closes).
+- **…and it must not believe every `lostpointercapture` it sees.** A *touch* pointer is implicitly
+  captured by whatever element it lands on, so calling `setPointerCapture` on an ancestor revokes
+  that — and the descendant's `lostpointercapture` **bubbles** straight into the ancestor's own
+  handler, one event after the drag begins. Treating it as a cancellation made every swipe cancel
+  itself on the frame it started, on touch only: a mouse takes no implicit capture, so it worked
+  perfectly on a desktop and did nothing on a phone or in Chrome's device toolbar. Check
+  `e.target === root` (`SwipePager.onLostCapture`).
+- **A nil Go slice marshals to `null`, and the client's type says it is an array.** `rejected` on the
+  push response is the case that shipped: `res.rejected.length` threw a `TypeError` on every
+  *successful* push, the engine classified `TypeError` as a transport failure, and the app reported
+  itself offline while every request returned 200. Two rules came out of it — a response slice is
+  initialised, never nil (`api.rejections`), and only the HTTP layer decides what "offline" means, by
+  wrapping a rejected `fetch` in `NetworkError` (`api/http.ts`). Never classify a network failure by
+  error *type* further up: `TypeError` is also what a plain bug produces.
 - **Overlays animate by wrapping the `v-if` in a `<Transition>` at the call site**, not by a keyframe
   inside the component: a `v-if` alone cannot animate a departure, and the departure is the half
   people notice. The named transitions (`mf-fade`, `mf-sheet`, `mf-drawer-l/r`, `mf-page`) live in

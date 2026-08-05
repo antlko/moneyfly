@@ -79,6 +79,33 @@ func TestRefresher_TotalOutageIsNotAnError(t *testing.T) {
 	}
 }
 
+// The plausibility check compares a provider against a provider — never against
+// a number a person typed.
+//
+// Otherwise one mistyped rate poisons the pair permanently: every real rate
+// afterwards looks like an implausible jump away from the typo and is refused,
+// and the symptom is rates that quietly stop moving — the exact failure the
+// check exists to prevent.
+func TestRefresher_AManualRateIsNotAPlausibilityYardstick(t *testing.T) {
+	typo := eurTo(t, "HUF", "39.15", "2026-08-01") // a decimal point out of place
+	typo.Source = SourceManual
+	service := serviceWith(t, typo)
+	p := &fakeProvider{key: "good", rates: table(t, map[string]string{"HUF": "391.5"})}
+
+	result, err := NewRefresher(service, []Provider{p}, 0, nil).
+		Refresh(context.Background(), on(t, "2026-08-04"))
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(result.Rejected) != 0 {
+		t.Fatalf("rejected = %+v, want the real rate accepted", result.Rejected)
+	}
+	got, _ := service.RateOn(context.Background(), StorageBase, "HUF", on(t, "2026-08-04"))
+	if got == nil || got.Rate.Cmp(ratOf(t, "391.5")) != 0 {
+		t.Errorf("HUF = %v, want the provider's 391.5 stored", got)
+	}
+}
+
 // A rate that moved 10x is far more likely to be a broken feed than a currency
 // event, and storing it would corrupt every derived figure while looking
 // entirely plausible on screen.

@@ -18,6 +18,7 @@ import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
 import { db } from '@/db'
 import { useDashboardStore } from '@/stores/dashboard'
+import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
@@ -36,6 +37,7 @@ const router = useRouter()
 const route = useRoute()
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
+const settings = useSettingsStore()
 
 /*
  * One screen, two steps — the amount, then the category. Not two routes: going
@@ -91,15 +93,22 @@ onMounted(async () => {
  * disagreed. Following the account is both what the reference does and the only
  * version that survives having two currencies.
  *
- * `null` until something is chosen, so the first active account is the default
- * without pinning it before the replica has loaded.
+ * `null` until something is chosen, so the fallback is resolved live rather than
+ * pinned before the replica has loaded.
+ *
+ * That fallback is the **account the last record was written against**, not the
+ * first in the list. Spending is habitual, and the first account is only the
+ * right guess for whoever happens to have their everyday wallet at the top.
+ * It falls through to the first account when nothing has been recorded yet, or
+ * when the remembered one has since been archived or deleted.
  */
 const accountId = ref<string | null>(null)
-const account = computed(
-  () =>
-    taxonomy.activeAccounts.find((a) => String(a.id) === accountId.value) ??
-    taxonomy.activeAccounts[0],
-)
+const account = computed(() => {
+  const chosen = accountId.value ?? settings.get<string>(SETTING.lastAccount, '')
+  return (
+    taxonomy.activeAccounts.find((a) => String(a.id) === chosen) ?? taxonomy.activeAccounts[0]
+  )
+})
 
 const currency = computed(() => String(account.value?.currency ?? dashboard.baseCurrency))
 const amount = computed(() => display(calc.value))
@@ -156,6 +165,7 @@ async function record(category: Row) {
   if (major <= 0) return
 
   const minor = toMinor(major, currency.value)
+  const payingAccount = String(account.value?.id ?? DEFAULT_ACCOUNT_ID)
   // An edit reuses the row id, so it travels as an ordinary last-write-wins op
   // and merges with whatever another device did to the same record.
   await sync.write(
@@ -168,11 +178,17 @@ async function record(category: Row) {
       amountMinor: kind.value === 'expense' ? -minor : minor,
       currency: currency.value,
       categoryId: category.id,
-      accountId: account.value?.id ?? DEFAULT_ACCOUNT_ID,
+      accountId: payingAccount,
       note: note.value.trim(),
     },
     props.id,
   )
+
+  // Remember it for the next record. Written after the record itself, so a
+  // failure here cannot cost the thing the screen was actually for.
+  if (payingAccount !== settings.get<string>(SETTING.lastAccount, '')) {
+    await settings.set(SETTING.lastAccount, payingAccount)
+  }
 
   // Deliberately silent when creating: a toast covers the bottom of the
   // dashboard you were just returned to — including the record buttons — and

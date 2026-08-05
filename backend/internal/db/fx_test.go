@@ -146,6 +146,89 @@ func TestFxRepo_LatestIsOnePerQuote(t *testing.T) {
 	}
 }
 
+// A rate someone typed in beats a fetched one for the same day, and does so
+// whichever was written first.
+//
+// Write order is the trap: ordering on id alone made the override depend on
+// whether the daily refresh happened to land after the person entered theirs, so
+// it worked in the afternoon and silently stopped working overnight.
+func TestFxRepo_ManualRateWinsWithinADay(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct{ name, first, second string }{
+		{"typed first", fx.SourceManual, "open-er-api"},
+		{"fetched first", "open-er-api", fx.SourceManual},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := openTest(t).Rates()
+			rates := map[string]string{fx.SourceManual: "391.5", "open-er-api": "360.4"}
+			store(t, repo, "2026-07-10", "HUF", rates[tc.first], tc.first)
+			store(t, repo, "2026-07-10", "HUF", rates[tc.second], tc.second)
+
+			on, err := repo.RateOn(ctx, fx.StorageBase, "HUF", date(t, "2026-07-10"))
+			if err != nil || on == nil {
+				t.Fatalf("RateOn = %v, %v", on, err)
+			}
+			if got := fx.FormatRate(on.Rate); got != "391.5" {
+				t.Errorf("RateOn = %s, want the typed 391.5", got)
+			}
+
+			latest, err := repo.Latest(ctx, fx.StorageBase)
+			if err != nil || len(latest) != 1 {
+				t.Fatalf("Latest = %v, %v", latest, err)
+			}
+			if got := fx.FormatRate(latest[0].Rate); got != "391.5" {
+				t.Errorf("Latest = %s, want the typed 391.5", got)
+			}
+
+			// The client's cache is keyed on (quote, date) and can hold only one
+			// row per day, so history has to have already decided which.
+			history, err := repo.History(ctx, fx.StorageBase, "HUF",
+				date(t, "2026-07-01"), date(t, "2026-07-31"))
+			if err != nil || len(history) != 1 {
+				t.Fatalf("History returned %d rows, want 1 per date (%v)", len(history), err)
+			}
+			if got := fx.FormatRate(history[0].Rate); got != "391.5" {
+				t.Errorf("History = %s, want the typed 391.5", got)
+			}
+		})
+	}
+}
+
+// A provider rate published *later* takes over again: this records what a rate
+// was on a day, not a permanent preference. For a currency no provider
+// publishes, no later rate ever arrives and the typed one keeps applying — which
+// is the case the feature exists for.
+func TestFxRepo_LaterProviderRateSupersedesAManualOne(t *testing.T) {
+	repo := openTest(t).Rates()
+	store(t, repo, "2026-07-10", "HUF", "391.5", fx.SourceManual)
+	store(t, repo, "2026-07-11", "HUF", "360.4", "open-er-api")
+
+	on, err := repo.RateOn(context.Background(), fx.StorageBase, "HUF", date(t, "2026-07-12"))
+	if err != nil || on == nil {
+		t.Fatalf("RateOn = %v, %v", on, err)
+	}
+	if got := fx.FormatRate(on.Rate); got != "360.4" {
+		t.Errorf("RateOn = %s, want 360.4 — a newer published rate is still newer", got)
+	}
+}
+
+// Entering a rate for an older date must not make that date look like the
+// newest one. `Latest` grouped on MAX(id), i.e. whichever row was written last.
+func TestFxRepo_LatestIgnoresWriteOrder(t *testing.T) {
+	repo := openTest(t).Rates()
+	store(t, repo, "2026-07-10", "HUF", "360.4", "open-er-api")
+	store(t, repo, "2026-06-01", "HUF", "355.0", fx.SourceManual)
+
+	latest, err := repo.Latest(context.Background(), fx.StorageBase)
+	if err != nil || len(latest) != 1 {
+		t.Fatalf("Latest = %v, %v", latest, err)
+	}
+	if got := fx.FormatRate(latest[0].Rate); got != "360.4" {
+		t.Errorf("Latest = %s, want 360.4 — July is later than June, whatever was typed when", got)
+	}
+}
+
 // What the refresher requires a provider to publish is derived from the data,
 // not hardcoded: adding a forint account is what makes the instance insist on a
 // forint rate.

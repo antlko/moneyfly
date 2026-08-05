@@ -96,6 +96,64 @@ func (s *Server) handleRateHistory(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"rates": out})
 }
 
+// setRateRequest is one hand-entered rate: "1 EUR is worth `rate` `quote`".
+type setRateRequest struct {
+	Quote string `json:"quote"`
+	Rate  string `json:"rate"`
+	// AsOf defaults to today. It is settable so a rate can be recorded against
+	// the day it actually applied — entering last week's rate today must not
+	// re-price last week at today's value.
+	AsOf string `json:"asOf"`
+}
+
+// handleSetRate stores a rate a person typed in.
+//
+// Only EUR-based rates are accepted, exactly as for a provider: the inverse is
+// computed and never stored, which is what makes it impossible to hold
+// EUR→USD 1.14 and USD→EUR 0.88 at the same time (docs/ARCHITECTURE.md).
+//
+// It overrides the provider for that date by ordinary means rather than by
+// privilege — same date, different source, written later, and RateOn takes the
+// most recent row for the date. A provider rate published on a *later* day then
+// takes over again, which is correct: this records what a rate was on a day, not
+// a permanent preference. For a currency no provider publishes, no later rate
+// ever arrives and the entered one keeps applying.
+func (s *Server) handleSetRate(c fiber.Ctx) error {
+	var in setRateRequest
+	if err := decode(c, &in); err != nil {
+		return err
+	}
+	if len(in.Quote) != 3 {
+		return fiber.NewError(fiber.StatusBadRequest, "quote: want a 3-letter currency code")
+	}
+	rate, err := fx.ParseRate(in.Rate)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "rate: want a decimal number, e.g. 391.5")
+	}
+	if rate.Sign() <= 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "rate: must be greater than zero")
+	}
+	asOf := time.Now().UTC()
+	if in.AsOf != "" {
+		if asOf, err = time.Parse(fx.DateLayout, in.AsOf); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "asOf: want YYYY-MM-DD")
+		}
+	}
+
+	stored, err := s.rates().Upsert(c.Context(), fx.Rate{
+		AsOf:      asOf.UTC().Truncate(24 * time.Hour),
+		Base:      fx.StorageBase,
+		Quote:     in.Quote,
+		Rate:      rate,
+		Source:    fx.SourceManual,
+		FetchedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(rateDTO(stored, time.Now().UTC().Truncate(24*time.Hour)))
+}
+
 // handleCurrencies returns the exponent table.
 //
 // The client ships its own copy so it can format offline from the first paint;

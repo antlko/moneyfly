@@ -108,6 +108,40 @@ believing it had synced.
 of not using a site; eviction costs no *data* — the server has it all and the device re-bootstraps —
 but it does cost the **unsent queue**, which exists nowhere else.
 
+## 4a-bis. How much fits
+
+The dashboard holds **every** live transaction in memory — one `liveQuery` over the whole `txn`
+table, with each period sliced out of it by a string comparison on the date. Not a query per period:
+paging the carousel used to tear down a Dexie subscription and build another, so every swipe went
+back to the database for data the device already had in full, and the screen it landed on arrived a
+frame or two late.
+
+That is only reasonable because the numbers are small, so here they are.
+
+| | per row | 10k rows | 100k rows |
+| --- | --- | --- | --- |
+| stored in IndexedDB (JSON + indexes) | ~300 B | ~3 MB | ~30 MB |
+| held as JS objects | ~1 KB | ~10 MB | ~100 MB |
+
+For scale: the real Monefy export this project is tested against is **1,683 rows for two and a half
+years** of daily spending. Ten thousand rows is roughly fifteen years of it; a hundred thousand is
+not a personal ledger.
+
+The ceilings, none of which these come close to:
+
+* **IndexedDB quota** — Chrome allows an origin up to about 60% of free disk; Safari grants ~1 GB and
+  more on request. `navigator.storage.persist()` is called at startup (`main.ts`), which is what stops
+  Safari evicting the replica after a week of not opening the app. Eviction costs no data — the
+  server has everything and the device re-bootstraps — but it does cost the *unsent* queue.
+* **The array itself** — an engine handles a hundred thousand small objects without complaint. The
+  cost that would bite first is re-deriving the totals on every change, and those are computed
+  properties over one filtered slice, not over the whole table.
+* **The snapshot request** — a new device bootstraps from `/api/sync/snapshot` in one response.
+  That is the one place a very large ledger would be felt, and it is once per device.
+
+If a ledger ever did grow past this, the fix is not to go back to per-period queries: it is to bound
+what is held to a window of years around the visible period, keeping the slice synchronous.
+
 ## 4b. Exchange rates
 
 Rates are the one thing in the app that is neither configuration nor synced user data, and they are
@@ -121,6 +155,13 @@ EUR→USD 1.14 and USD→EUR 0.88 and quietly disagrees with itself.
 **A lookup takes the exact date, else the nearest earlier one — never a later one.** A total
 computed for last March must not change because a rate arrived in April. Weekends and holidays leave
 gaps, so "earlier" is the normal case, not the exception.
+
+**Within one date, a hand-entered rate beats a fetched one, and that ordering is written once.**
+`db.ratePrecedence` is the whole rule — later date, then `source = 'manual'`, then the later write —
+and `RateOn`, `Latest` and `History` all order by it. They used to each phrase it slightly
+differently: ordering on `id` alone made an override depend on whether the daily refresh happened to
+run after the person typed their rate, and `Latest` grouped on `MAX(id)`, so entering a rate for an
+older date made that date look like the newest one everywhere.
 
 **`fx_rate` is not a synced table.** No `user_id`, no `data` JSON, no lamport, no tombstone. A rate
 is a fact about the world, so replicating it through a private ordered log would buy nothing. The

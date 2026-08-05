@@ -1,6 +1,6 @@
 import { ref, shallowRef } from 'vue'
 
-import { ApiError, syncPull, syncPush, syncSnapshot } from '@/api/http'
+import { ApiError, NetworkError, syncPull, syncPush, syncSnapshot } from '@/api/http'
 import {
   db as defaultDB,
   META_BOOTSTRAPPED,
@@ -146,6 +146,7 @@ export class SyncEngine {
     this.timer = null
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.onOnline)
+      window.removeEventListener('pageshow', this.onOnline)
       document.removeEventListener('visibilitychange', this.onVisible)
     }
   }
@@ -244,8 +245,23 @@ export class SyncEngine {
   private async runSync(): Promise<void> {
     this.state.value = 'syncing'
     try {
-      await this.flush()
+      // Pull even when the push failed, and report the push's failure
+      // afterwards.
+      //
+      // Sending and receiving are independent errands that happen to share a
+      // trip. Chaining them meant one unsendable op — a server that refuses it,
+      // a bug on the way out — stopped this device from *receiving* anything at
+      // all, so a phone would sit there missing everything entered on a laptop
+      // and give no hint why. If the network is down both fail regardless, which
+      // is the case where the ordering never mattered.
+      let sendFailure: unknown = null
+      try {
+        await this.flush()
+      } catch (e) {
+        sendFailure = e
+      }
       await this.pull()
+      if (sendFailure) throw sendFailure
       this.state.value = 'idle'
       this.error.value = null
       this.lastSyncAt.value = Date.now()
@@ -285,11 +301,14 @@ export class SyncEngine {
         }
       })
 
-      if (res.rejected.length > 0) {
+      // `?? []` because an older server sends `null` for "nothing rejected", and
+      // the happy path must not be the one that throws.
+      const rejected = res.rejected ?? []
+      if (rejected.length > 0) {
         // A rejection is a client bug, not a conflict — conflicts resolve
         // silently. Surface it rather than retrying something the server will
         // never accept.
-        console.error('sync: server rejected operations', res.rejected)
+        console.error('sync: server rejected operations', rejected)
       }
       await this.raiseLamport(res.lamport)
       if (batch.length < PUSH_BATCH) return
@@ -391,6 +410,13 @@ export class SyncEngine {
     this.timer = setInterval(() => void this.sync(), POLL_INTERVAL_MS)
     window.addEventListener('online', this.onOnline)
     document.addEventListener('visibilitychange', this.onVisible)
+    // `pageshow` and not just `visibilitychange`: coming back to an installed
+    // PWA, or hitting Back, restores the page from the back/forward cache with
+    // every timer frozen and no visibility change to announce it. Without this
+    // the first thing you see after reopening the app is up to thirty seconds
+    // stale, which reads as "it did not sync when I opened it" — because it
+    // hadn't.
+    window.addEventListener('pageshow', this.onOnline)
   }
 
   private onOnline = () => void this.sync()
@@ -444,22 +470,26 @@ function bodyOf(row: Row): Record<string, unknown> {
  * A transport failure, as opposed to the server saying no — or this device
  * breaking.
  *
- * This used to be `!(e instanceof ApiError)`, i.e. "anything that is not an HTTP
- * response is the network's fault". That swept up every local failure — a Dexie
- * transaction aborting, a value that would not clone, a bug in this file — and
- * reported it as "offline" while every request was returning 200. The symptom is
- * miserable to diagnose, because it sends you to check a connection that was
- * never the problem.
+ * The answer comes from the HTTP layer, which is the only place that can tell:
+ * it wraps a rejected `fetch` in a `NetworkError` and nothing else.
  *
- * `fetch` rejects with a `TypeError` and nothing else for a genuine transport
- * failure, so that is the test. Anything else is ours, and says so.
+ * The two previous attempts at this both classified by *type* up here, and both
+ * were wrong in the same direction. `!(e instanceof ApiError)` swept up every
+ * local failure. Narrowing it to `TypeError` looked exact — that is genuinely
+ * what `fetch` rejects with — but `TypeError` is also what reading a property
+ * off a null produces, and one null field in a push response then had the app
+ * announcing itself offline while every request returned 200. A bug on this
+ * device must say so; sending someone to check their connection is worse than
+ * saying nothing.
+ *
+ * A DOM AbortError stays here: a navigation or a closing tab is not a defect,
+ * and there is no device to blame for it either.
  */
 function isNetworkError(e: unknown): boolean {
   if (e instanceof ApiError) return false
-  if (e instanceof TypeError) return true
-  // A DOM AbortError is a navigation or a closing tab, not a defect.
+  if (e instanceof NetworkError) return true
   if (e instanceof DOMException && e.name === 'AbortError') return true
-  return typeof navigator !== 'undefined' && navigator.onLine === false
+  return false
 }
 
 /** The engine this app uses. Tests build their own. */

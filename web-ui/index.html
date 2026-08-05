@@ -10,11 +10,28 @@
       viewport-fit=cover lets the app paint under the iPhone home indicator; the
       two round record buttons then sit on env(safe-area-inset-bottom) padding
       rather than being pushed up by a white bar.
+
+      `interactive-widget=resizes-content` keeps the on-screen keyboard from
+      sliding the whole fixed shell up out of view; browsers that do not know it
+      ignore it.
     -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="theme-color" content="#7ec89f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!--
+      `black-translucent`, not `default`. It is the only value that lets the page
+      paint *under* the status bar — and it is also what makes
+      env(safe-area-inset-top) report a real number at all. With `default`, iOS
+      keeps the status bar on an opaque strip of its own above the web view, the
+      inset is 0, the header's `pt-safe-t` pads nothing, and the app sits in a
+      box below the clock looking like a web page in a frame instead of like an
+      app. The header is green with white text already, so the status bar's white
+      glyphs land on the colour they were meant for.
+    -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="moneyfly" />
     <title>moneyfly</title>
   </head>
