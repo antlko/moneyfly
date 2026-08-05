@@ -57,6 +57,24 @@
   --spacing-safe-t: env(safe-area-inset-top, 0px);
 
   /*
+    Clearance under the record buttons.
+
+    Not the whole bottom inset. That inset is sized for a *scrolling document*
+    whose content must clear the home indicator entirely; installed, it put a
+    visible band of empty background under the two buttons the app exists for,
+    while the same screen in a browser tab — where the inset is zero — sat
+    correctly. The indicator is a thin bar about 8pt up from the edge, so what is
+    actually needed is enough to clear it, not enough to avoid it.
+
+    `max()` keeps a floor for the browser case, where the inset is zero and there
+    is nothing to subtract from — and that floor is what makes the same rule work
+    everywhere: iOS installed reports ~34px and lands on 14; Android reports 0 or
+    a gesture bar's ~24px and lands on the floor or near it; a browser tab reports
+    0 and lands on the floor. One value, no per-platform branch.
+  */
+  --spacing-fab-b: max(0.25rem, calc(env(safe-area-inset-bottom, 0px) - 1.25rem));
+
+  /*
     One motion vocabulary. Every panel in the app enters and leaves with these
     two values, so nothing reads as belonging to a different application. The
     curve decelerates hard at the end, which is what makes a sheet look like it
@@ -64,31 +82,136 @@
   */
   --mf-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --mf-duration: 200ms;
+
+  /*
+    Panels get their own pair. A drawer crosses most of the screen where a fade
+    crosses nothing, and at 200ms that distance has to be covered fast enough
+    that the eye reads it as a jump with a smear on it rather than as something
+    arriving. The curve is steeper still at the end than --mf-ease: almost all
+    the travel happens early, and the last few pixels take their time, which is
+    the part that reads as weight.
+  */
+  --mf-duration-panel: 280ms;
+  --mf-ease-panel: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @layer base {
+  /*
+    The shell is an app frame, not a document — and on a phone that has to be
+    enforced, not merely intended.
+
+    `height: 100%` alone does not do it. On iOS it resolves against the *large*
+    viewport, the one with the URL bar retracted, so the document is taller than
+    what you can see and the whole app scrolls: the header slides away under the
+    clock, the record buttons hang off the bottom, and every vertical gesture is
+    competing with a page scroll that should not exist. Add a transient 24px from
+    a page transition and it scrolls even in a standalone window.
+
+    `position: fixed; inset: 0` on the mount point is what makes the frame
+    *exactly* the visible viewport, with nothing to scroll at document level ever
+    again. Inner lists still scroll; they are the only things that should.
+  */
   html,
-  body,
-  #app {
+  body {
     height: 100%;
+    overflow: hidden;
+    /* No rubber-band, no pull-to-refresh: neither belongs to an app frame. */
+    overscroll-behavior: none;
+  }
+
+  #app {
+    position: fixed;
+    inset: 0;
+    /*
+      Landscape and the notch. The top and bottom insets are spent deliberately
+      by the header and the record buttons; the side ones are nobody's job in
+      particular, so they belong here, once.
+    */
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
 
   body {
     background-color: var(--color-mf-bg);
     color: var(--color-mf-ink);
     -webkit-tap-highlight-color: transparent;
-    overscroll-behavior-y: none;
   }
 
   /*
     The record screen is a keypad, so every tap must register immediately and
-    nothing may double-tap-zoom. touch-action does this without disabling pinch
-    zoom on the rest of the app (which would be an accessibility regression).
+    nothing may double-tap-zoom.
   */
   button,
   [role='button'] {
     touch-action: manipulation;
     cursor: pointer;
+    transition: opacity 90ms var(--mf-ease);
+  }
+
+  /*
+    Every control acknowledges the press.
+
+    On a phone there is no hover and no key travel, so the press is the entire
+    feedback: without it the only evidence a tap landed is whatever happens
+    next, and when that takes a moment the tap gets repeated. A dip in opacity
+    is the one cue that suits every shape here — round buttons, full-width
+    bars, bare icons — without any of them needing to opt in.
+
+    Controls that want more say so themselves (the keypad and the record
+    buttons also shrink); this is the floor, not the whole vocabulary.
+  */
+  button:active,
+  [role='button']:active {
+    opacity: 0.6;
+  }
+
+  button:disabled {
+    opacity: 1;
+  }
+
+  /*
+    On a touch device nothing here is prose, and treating it as prose is what
+    breaks the gestures.
+
+    A drag that starts on the month label or on a figure in the donut becomes a
+    *text selection* — the swipe never reaches the pager, and you get the grab
+    handles and the callout bubble instead. Long-pressing a category icon does
+    the same. Native apps do not behave that way because native labels are not
+    selectable, and on a phone neither are these.
+
+    Scoped to `pointer: coarse` on purpose. With a mouse there is no gesture to
+    protect and selecting an amount to copy it is a reasonable thing to want, so
+    the desktop layout keeps its text. Inputs keep theirs everywhere.
+  */
+  @media (pointer: coarse) {
+    #app {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    input,
+    textarea,
+    [contenteditable] {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+  }
+}
+
+/*
+  Installed, the app does not pinch-zoom.
+
+  This is the difference between a document and an application. Zoom leaves a
+  phone-sized layout permanently wider than the screen — the header controls cut
+  in half at both edges, the month labels clipped, the whole frame pannable — and
+  in a standalone window there is no chrome, no zoom indicator and no way to ask
+  for 100% back. Every gesture then fights the pan instead of reaching the app.
+  A browser tab keeps zoom, because there it is a document and there is a way out.
+*/
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html {
+    touch-action: pan-x pan-y;
   }
 }
 
@@ -108,12 +231,6 @@
 */
 .mf-fade-enter-active,
 .mf-fade-leave-active,
-.mf-sheet-enter-active,
-.mf-sheet-leave-active,
-.mf-drawer-l-enter-active,
-.mf-drawer-l-leave-active,
-.mf-drawer-r-enter-active,
-.mf-drawer-r-leave-active,
 .mf-page-enter-active,
 .mf-page-leave-active {
   transition:
@@ -126,25 +243,84 @@
   opacity: 0;
 }
 
-/* The overlay fades; the panel inside it also travels. */
+/*
+  The dashboard body trading between donut and list.
+
+  The two states are one screen drawn twice, so the motion says "redrawn", not
+  "navigated": the outgoing one settles back a little as it fades, the incoming
+  one rises the same distance into place. Enough to see where the list came
+  from, not enough to feel like a page.
+
+  `mode="out-in"` pays the duration twice, so the halves are unequal — the exit
+  is brisk and the entrance takes its time, which is what makes the arrival the
+  part you notice rather than the departure.
+*/
+.mf-swap-enter-active {
+  transition:
+    opacity 170ms var(--mf-ease),
+    transform 170ms var(--mf-ease-panel);
+}
+.mf-swap-leave-active {
+  transition:
+    opacity 110ms var(--mf-ease),
+    transform 110ms var(--mf-ease);
+}
+.mf-swap-enter-from {
+  opacity: 0;
+  transform: translateY(14px) scale(0.985);
+}
+.mf-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.985);
+}
+
+/*
+  The dimmed backdrop behind every overlay.
+
+  A class of its own rather than `bg-black/30` on each root, for one reason: the
+  transitions below animate this colour away, and a Tailwind utility lives in
+  `@layer utilities` while these rules do not. Whether "unlayered beats layered"
+  resolves the way you expect is exactly the kind of thing to not be relying on
+  in the one place where being wrong means the animation silently does nothing.
+  Defined here and overridden here, both unlayered, decided by source order.
+*/
+.mf-scrim {
+  background-color: rgb(0 0 0 / 0.3);
+}
+
+/*
+  Overlays are two things moving at once, and they must not move the same way:
+  the **scrim darkens** and the **panel travels, at full opacity**.
+
+  The dimming is animated as `background-color`, not as the overlay's `opacity`.
+  Opacity applies to the whole subtree, so the panel faded up along with the
+  scrim behind it — a drawer arriving as a transparent ghost of itself, its text
+  legible only once it had stopped. That is what "the animation isn't smooth"
+  looks like from the outside; nothing is dropping frames, the panel is simply
+  never solid while it is in motion.
+*/
+.mf-sheet-enter-active,
+.mf-sheet-leave-active,
+.mf-drawer-l-enter-active,
+.mf-drawer-l-leave-active,
+.mf-drawer-r-enter-active,
+.mf-drawer-r-leave-active {
+  transition: background-color var(--mf-duration-panel) var(--mf-ease);
+}
+
 .mf-sheet-enter-from,
 .mf-sheet-leave-to,
 .mf-drawer-l-enter-from,
 .mf-drawer-l-leave-to,
 .mf-drawer-r-enter-from,
 .mf-drawer-r-leave-to {
-  opacity: 0;
+  background-color: transparent;
 }
 
 .mf-sheet-enter-from > *,
 .mf-sheet-leave-to > * {
   transform: translateY(100%);
 }
-.mf-sheet-enter-active > *,
-.mf-sheet-leave-active > * {
-  transition: transform var(--mf-duration) var(--mf-ease);
-}
-
 .mf-drawer-l-enter-from > *,
 .mf-drawer-l-leave-to > * {
   transform: translateX(-100%);
@@ -153,11 +329,21 @@
 .mf-drawer-r-leave-to > * {
   transform: translateX(100%);
 }
+
+/*
+  `will-change` promotes the panel for the length of the gesture only. Left on
+  permanently it costs a layer per overlay for the 99% of the time none of them
+  is moving; absent entirely, the first frame of every drawer is the one where
+  the compositor is still deciding, which is exactly the frame people see.
+*/
+.mf-sheet-enter-active > *,
+.mf-sheet-leave-active > *,
 .mf-drawer-l-enter-active > *,
 .mf-drawer-l-leave-active > *,
 .mf-drawer-r-enter-active > *,
 .mf-drawer-r-leave-active > * {
-  transition: transform var(--mf-duration) var(--mf-ease);
+  transition: transform var(--mf-duration-panel) var(--mf-ease-panel);
+  will-change: transform;
 }
 
 /*

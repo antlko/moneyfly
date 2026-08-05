@@ -36,7 +36,7 @@ LABEL org.opencontainers.image.title="moneyfly" \
       org.opencontainers.image.source="https://github.com/antlko/moneyfly"
 COPY --from=build /moneyfly /moneyfly
 ENV MONEYFLY_CONFIG_DIR=/config \
-    MONEYFLY_ADDR=:8080
-EXPOSE 8080
+    MONEYFLY_ADDR=:5007
+EXPOSE 5007
 VOLUME ["/config"]
 ENTRYPOINT ["/moneyfly"]

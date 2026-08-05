@@ -15,6 +15,7 @@ import RecordsSheet from '@/components/monefy/RecordsSheet.vue'
 import SwipePager from '@/components/monefy/SwipePager.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'
+import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useSyncStore } from '@/stores/sync'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import type { Row } from '@/sync/types'
@@ -22,6 +23,7 @@ import type { Row } from '@/sync/types'
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
 const fx = useFxStore()
+const settings = useSettingsStore()
 const syncStore = useSyncStore()
 const router = useRouter()
 
@@ -47,10 +49,20 @@ watch(
  * request per foreign currency actually in use, and none at all for someone
  * with a single currency.
  */
-onMounted(() => void fx.refresh(dashboard.baseCurrency))
+const declaredCurrencies = () => settings.get<string[]>(SETTING.currencies, [])
+
+onMounted(() => void fx.refresh(dashboard.baseCurrency, declaredCurrencies()))
 useEventListener(document, 'visibilitychange', () => {
-  if (!document.hidden) void fx.refresh(dashboard.baseCurrency)
+  if (document.hidden) return
+  void fx.refresh(dashboard.baseCurrency, declaredCurrencies())
+  // Opening the app shows *now*. See `goToNow` — the period outlives a trip to
+  // the home screen, so without this the app comes back on whatever month was
+  // being read a week ago.
+  dashboard.goToNow()
 })
+// An installed app restored from the back/forward cache gets no visibility
+// change to announce it, only `pageshow`.
+useEventListener(window, 'pageshow', () => dashboard.goToNow())
 
 /**
  * Tapping a category — on the donut or in the list — starts an expense already
@@ -90,9 +102,17 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
       @open="showRecords = true"
     />
 
+    <!--
+      One pager, kept mounted across a view change.
+
+      It used to carry `:key="dashboard.view"`, which threw the whole thing away
+      and built a new one every time the `≡` was pressed — so switching between
+      the donut and the list read as *navigating somewhere*, when it is the same
+      screen drawn a second way. The two bodies cross-fade inside it instead.
+    -->
     <SwipePager
-      :key="dashboard.view"
       :disabled="!dashboard.pageable"
+      :vertical-scroll="dashboard.view === 'list'"
       @prev="dashboard.step(-1)"
       @next="dashboard.step(1)"
     >
@@ -110,25 +130,37 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
         the total.
       </p>
 
-      <!-- The donut block takes the whole body: its icon frame is sized to fill it. -->
-      <div v-if="dashboard.view === 'donut'" class="min-h-0 flex-1 px-2 py-1">
-        <CategoryDonut
-          :totals="dashboard.byCategory"
-          :all-categories="taxonomy.expenseCategories"
-          :income-minor="dashboard.incomeMinor"
-          :expense-minor="dashboard.expenseMinor"
-          :currency="dashboard.baseCurrency"
-          @select="recordIn"
-        />
-      </div>
-      <div v-else class="min-h-0 flex-1 overflow-y-auto">
-        <CategoryList
-          :totals="dashboard.byCategory"
-          :rows="dashboard.rows"
-          :currency="dashboard.baseCurrency"
-          @open="openRecord"
-        />
-      </div>
+      <!--
+        Donut and list are two drawings of one thing, so they trade places
+        rather than arriving from somewhere: a short cross-fade, in position,
+        with the carousel and the pill sitting still around them.
+      -->
+      <Transition name="mf-swap" mode="out-in">
+        <!-- The donut block takes the whole body: its icon frame is sized to fill it. -->
+        <!--
+          No horizontal padding: the icon ring is measured from this box, so
+          every point of padding here pushes the categories in from the edges
+          and takes the same off the chart's diameter twice over.
+        -->
+        <div v-if="dashboard.view === 'donut'" key="donut" class="min-h-0 flex-1 py-1">
+          <CategoryDonut
+            :totals="dashboard.byCategory"
+            :all-categories="taxonomy.expenseCategories"
+            :income-minor="dashboard.incomeMinor"
+            :expense-minor="dashboard.expenseMinor"
+            :currency="dashboard.baseCurrency"
+            @select="recordIn"
+          />
+        </div>
+        <div v-else key="list" class="min-h-0 flex-1 overflow-y-auto">
+          <CategoryList
+            :totals="dashboard.byCategory"
+            :rows="dashboard.rows"
+            :currency="dashboard.baseCurrency"
+            @open="openRecord"
+          />
+        </div>
+      </Transition>
     </SwipePager>
 
     <BalancePill
@@ -140,13 +172,6 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
       @toggle-sort="dashboard.toggleSort"
       @open="showRecords = true"
     />
-
-    <p
-      v-if="syncStore.pending || syncStore.state === 'offline'"
-      class="shrink-0 pt-1 text-center text-xs text-mf-muted"
-    >
-      {{ syncStore.label }}
-    </p>
 
     <RecordFabs @expense="router.push('/new/expense')" @income="router.push('/new/income')" />
 

@@ -5,7 +5,7 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// In dev the SPA runs on Vite's own server and the Go API on :8080, so /api and
+// In dev the SPA runs on Vite's own server and the Go API on :5007, so /api and
 // the SSE stream are proxied. In production both come from the same origin —
 // the Go binary serves the built SPA out of its embedded FS.
 export default defineConfig({
@@ -49,7 +49,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'http://127.0.0.1:5007',
         changeOrigin: true,
         // The sync event stream is SSE: buffering it would defeat the point.
         configure: (proxy) => {

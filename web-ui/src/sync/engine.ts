@@ -1,6 +1,6 @@
 import { ref, shallowRef } from 'vue'
 
-import { ApiError, syncPull, syncPush, syncSnapshot } from '@/api/http'
+import { ApiError, NetworkError, syncPull, syncPush, syncSnapshot } from '@/api/http'
 import {
   db as defaultDB,
   META_BOOTSTRAPPED,
@@ -21,6 +21,15 @@ export type SyncState = 'idle' | 'syncing' | 'offline' | 'error'
 
 /** How often to sync when nothing else prompts it. */
 const POLL_INTERVAL_MS = 30_000
+
+/**
+ * Tables a bootstrap must not clear.
+ *
+ * `outbox` holds work the server has never seen. `meta` holds the cursor and
+ * clock. `fx_rate` is not synced data at all — see docs/ARCHITECTURE.md §4b —
+ * so a snapshot neither contains it nor can replace it.
+ */
+const KEPT_ON_BOOTSTRAP = new Set(['outbox', 'meta', 'fx_rate'])
 /** How many pending ops go in one push. */
 const PUSH_BATCH = 500
 
@@ -137,6 +146,7 @@ export class SyncEngine {
     this.timer = null
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.onOnline)
+      window.removeEventListener('pageshow', this.onOnline)
       document.removeEventListener('visibilitychange', this.onVisible)
     }
   }
@@ -235,8 +245,23 @@ export class SyncEngine {
   private async runSync(): Promise<void> {
     this.state.value = 'syncing'
     try {
-      await this.flush()
+      // Pull even when the push failed, and report the push's failure
+      // afterwards.
+      //
+      // Sending and receiving are independent errands that happen to share a
+      // trip. Chaining them meant one unsendable op — a server that refuses it,
+      // a bug on the way out — stopped this device from *receiving* anything at
+      // all, so a phone would sit there missing everything entered on a laptop
+      // and give no hint why. If the network is down both fail regardless, which
+      // is the case where the ordering never mattered.
+      let sendFailure: unknown = null
+      try {
+        await this.flush()
+      } catch (e) {
+        sendFailure = e
+      }
       await this.pull()
+      if (sendFailure) throw sendFailure
       this.state.value = 'idle'
       this.error.value = null
       this.lastSyncAt.value = Date.now()
@@ -246,8 +271,11 @@ export class SyncEngine {
       if (isNetworkError(e)) {
         this.state.value = 'offline'
       } else {
+        // Something on this device failed. Say so, and log it — a sync error
+        // that only ever surfaces as a word in the header is undebuggable.
         this.state.value = 'error'
         this.error.value = e instanceof Error ? e.message : String(e)
+        console.error('sync: local failure', e)
       }
     } finally {
       await this.refreshPending()
@@ -273,11 +301,14 @@ export class SyncEngine {
         }
       })
 
-      if (res.rejected.length > 0) {
+      // `?? []` because an older server sends `null` for "nothing rejected", and
+      // the happy path must not be the one that throws.
+      const rejected = res.rejected ?? []
+      if (rejected.length > 0) {
         // A rejection is a client bug, not a conflict — conflicts resolve
         // silently. Surface it rather than retrying something the server will
         // never accept.
-        console.error('sync: server rejected operations', res.rejected)
+        console.error('sync: server rejected operations', rejected)
       }
       await this.raiseLamport(res.lamport)
       if (batch.length < PUSH_BATCH) return
@@ -315,9 +346,12 @@ export class SyncEngine {
     await this.db.transaction('rw', this.db.tables, async () => {
       // Clear the rows but keep the outbox: work written offline has not reached
       // the server yet, so it is not in the snapshot and dropping it would lose
-      // it outright.
+      // it outright. `fx_rate` is kept for a different reason — it is not a
+      // replica of synced rows at all, so a snapshot has nothing to say about
+      // it, and wiping it would throw away the only thing that lets an offline
+      // device convert currencies.
       for (const t of this.db.tables) {
-        if (t.name !== 'outbox' && t.name !== 'meta') await t.clear()
+        if (!KEPT_ON_BOOTSTRAP.has(t.name)) await t.clear()
       }
     })
 
@@ -376,6 +410,13 @@ export class SyncEngine {
     this.timer = setInterval(() => void this.sync(), POLL_INTERVAL_MS)
     window.addEventListener('online', this.onOnline)
     document.addEventListener('visibilitychange', this.onVisible)
+    // `pageshow` and not just `visibilitychange`: coming back to an installed
+    // PWA, or hitting Back, restores the page from the back/forward cache with
+    // every timer frozen and no visibility change to announce it. Without this
+    // the first thing you see after reopening the app is up to thirty seconds
+    // stale, which reads as "it did not sync when I opened it" — because it
+    // hadn't.
+    window.addEventListener('pageshow', this.onOnline)
   }
 
   private onOnline = () => void this.sync()
@@ -425,9 +466,30 @@ function bodyOf(row: Row): Record<string, unknown> {
   return body
 }
 
-/** A transport failure, as opposed to the server saying no. */
+/**
+ * A transport failure, as opposed to the server saying no — or this device
+ * breaking.
+ *
+ * The answer comes from the HTTP layer, which is the only place that can tell:
+ * it wraps a rejected `fetch` in a `NetworkError` and nothing else.
+ *
+ * The two previous attempts at this both classified by *type* up here, and both
+ * were wrong in the same direction. `!(e instanceof ApiError)` swept up every
+ * local failure. Narrowing it to `TypeError` looked exact — that is genuinely
+ * what `fetch` rejects with — but `TypeError` is also what reading a property
+ * off a null produces, and one null field in a push response then had the app
+ * announcing itself offline while every request returned 200. A bug on this
+ * device must say so; sending someone to check their connection is worse than
+ * saying nothing.
+ *
+ * A DOM AbortError stays here: a navigation or a closing tab is not a defect,
+ * and there is no device to blame for it either.
+ */
 function isNetworkError(e: unknown): boolean {
-  return !(e instanceof ApiError)
+  if (e instanceof ApiError) return false
+  if (e instanceof NetworkError) return true
+  if (e instanceof DOMException && e.name === 'AbortError') return true
+  return false
 }
 
 /** The engine this app uses. Tests build their own. */

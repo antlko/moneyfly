@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { Banknote, BookOpen, CircleDollarSign, NotebookTabs, Settings } from '@lucide/vue'
+import {
+  Banknote,
+  BookOpen,
+  CircleDollarSign,
+  NotebookTabs,
+  RefreshCw,
+  Settings,
+} from '@lucide/vue'
 import type { Component } from 'vue'
 
 import AppDrawer from './AppDrawer.vue'
@@ -11,6 +18,7 @@ const ITEMS: { to: string; label: string; icon: Component; ready: boolean }[] = 
   { to: '/categories', label: 'Categories', icon: NotebookTabs, ready: false },
   { to: '/accounts', label: 'Accounts', icon: Banknote, ready: true },
   { to: '/currencies', label: 'Currencies', icon: CircleDollarSign, ready: true },
+  { to: '/sync', label: 'Sync', icon: RefreshCw, ready: true },
   { to: '/account', label: 'Settings', icon: Settings, ready: true },
   { to: '/guides', label: 'Guides', icon: BookOpen, ready: false },
 ]

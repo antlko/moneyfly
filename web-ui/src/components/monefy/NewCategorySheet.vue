@@ -24,7 +24,7 @@ function submit() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end bg-black/30" @click.self="$emit('cancel')">
+  <div class="fixed inset-0 z-50 flex items-end mf-scrim" @click.self="$emit('cancel')">
     <form
       class="max-h-[85%] w-full space-y-4 overflow-y-auto rounded-t-2xl bg-mf-bg p-4 pb-[calc(1rem+var(--spacing-safe-b))]"
       @submit.prevent="submit"

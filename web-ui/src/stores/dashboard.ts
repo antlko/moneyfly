@@ -64,6 +64,23 @@ export const useDashboardStore = defineStore('dashboard', () => {
     setPeriod({ kind: 'interval', anchor: from, until: to })
   /** Jump to the period containing a chosen day, keeping the kind. */
   const goToDay = (day: string) => setPeriod({ ...period.value, anchor: day })
+
+  /**
+   * Snap back to the period containing today, keeping the kind.
+   *
+   * Opening the app should show *now* — this August, this week, this year —
+   * whichever length of period is selected. The period is component-lifetime
+   * state, so an app left on last March and put in a pocket came back to last
+   * March, which reads as the app having lost this month's spending rather than
+   * as it having remembered where you were.
+   *
+   * A custom interval is left alone: it is a range someone chose deliberately,
+   * with no "current" one to snap to.
+   */
+  const goToNow = () => {
+    if (period.value.kind === 'interval') return
+    setPeriod(periodOfKind(period.value.kind))
+  }
   const step = (delta: number) => setPeriod(shiftPeriod(period.value, delta))
   /** Whether paging makes sense — "all time" has no neighbours. */
   const pageable = computed(() => period.value.kind !== 'all')
@@ -72,17 +89,45 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   const baseCurrency = computed(() => auth.user?.baseCurrency ?? 'EUR')
 
-  // Re-subscribes when the month changes: Dexie watches the database, not our refs.
-  const periodRows = useLiveQuery<Row[]>(
-    () => {
-      const { from, to } = bounds.value
-      return db.txn.where('[deleted+occurredOn]').between([0, from], [0, to, '￿']).toArray()
-    },
+  /**
+   * **Every** live transaction, held in memory and ordered by date.
+   *
+   * One subscription for the whole app, not one per period. It used to query
+   * the month you were looking at and re-subscribe whenever that moved, which
+   * is the textbook shape and wrong here: paging the carousel tore down a
+   * Dexie subscription and built another, so each swipe went back to the
+   * database and the screen it landed on arrived a frame or two later. Swiping
+   * through a year meant twelve round trips to IndexedDB to read data the
+   * device already had in full.
+   *
+   * The replica is a *complete* copy of this account's ledger — that is the
+   * point of it — so the periods are already sitting in the rows below and
+   * slicing them is a comparison, not a query. Paging is now synchronous, and
+   * nothing about it touches the network at any point.
+   *
+   * On size: a transaction is a few hundred bytes as JSON, so ten years of
+   * daily spending is a handful of megabytes and a few tens of thousands of
+   * rows — nowhere near what either IndexedDB or a JS array minds. See
+   * docs/ARCHITECTURE.md §"How much fits" for the actual ceilings.
+   */
+  const allRows = useLiveQuery<Row[]>(
+    () => db.txn.where('[deleted+occurredOn]').between([0, ''], [0, '￿']).toArray(),
     [],
-    // Dexie watches the database, not our refs, so the subscription is rebuilt
-    // whenever the period moves.
-    () => `${period.value.kind}:${period.value.anchor}:${period.value.until ?? ''}`,
   )
+
+  /**
+   * The visible period's rows, sliced from what is already loaded.
+   *
+   * The bounds are `YYYY-MM-DD` strings and the query above returns them in
+   * that order, so this is a string comparison per row and no more.
+   */
+  const periodRows = computed(() => {
+    const { from, to } = bounds.value
+    return allRows.value.filter((r) => {
+      const day = String(r.occurredOn ?? '')
+      return day >= from && day <= to
+    })
+  })
 
   /**
    * Which accounts the dashboard is limited to. Empty means all of them, which
@@ -208,6 +253,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     setPeriodKind,
     setInterval,
     goToDay,
+    goToNow,
     step,
     toggleView,
     toggleSort,

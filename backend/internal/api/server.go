@@ -38,6 +38,10 @@ type Server struct {
 	logins *loginLimiter
 	events *broker
 	stop   chan struct{}
+	// Signals the FX loop to look for newly needed currencies. Buffered by one:
+	// the signal means "something changed", so a second one while the first is
+	// pending would say nothing new.
+	fxWake chan struct{}
 }
 
 // New loads the config for configDir, opens the database, builds the Fiber app
@@ -65,6 +69,7 @@ func New(configDir string) (*Server, error) {
 		logins:    newLoginLimiter(),
 		events:    newBroker(),
 		stop:      make(chan struct{}),
+		fxWake:    make(chan struct{}, 1),
 	}
 	s.app = fiber.New(fiber.Config{
 		AppName:      "moneyfly",
@@ -136,6 +141,11 @@ func (s *Server) routes() {
 	// answer nothing but /api/health.
 	app.Get("/api/fx/latest", authed, s.handleLatestRates)
 	app.Get("/api/fx/rates", authed, s.handleRateHistory)
+	// Writing one is the exception to "read-only": a provider chain cannot
+	// publish every currency anyone holds, and a rate nobody can supply leaves
+	// those records outside every total. Not per-user for the same reason the
+	// reads are not — a rate is a fact about the world, not about an account.
+	app.Put("/api/fx/rates", authed, s.handleSetRate)
 	app.Get("/api/fx/currencies", authed, s.handleCurrencies)
 
 	// Sync.

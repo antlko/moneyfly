@@ -40,6 +40,36 @@ const drag = ref(0)
 let activePointer: number | null = null
 let startY = 0
 
+/**
+ * Whether this panel is on its way out, in which case it must stop styling
+ * itself and let the transition do it.
+ *
+ * This is what made closing feel abrupt. The drag writes an inline
+ * `transform` — and an inline style beats the class the `<Transition>` applies,
+ * so `.mf-sheet-leave-to > * { transform: translateY(100%) }` was overridden by
+ * an inline `translateY(0px)` and the panel never slid anywhere. Only the scrim
+ * faded, and the sheet vanished from under it. The gesture that opens it
+ * animated; the one that closes it could not.
+ */
+const closing = ref(false)
+
+/** The panel's own styling — nothing at all once the transition owns it. */
+const panelStyle = computed(() =>
+  closing.value
+    ? undefined
+    : {
+        transform: `translateY(${drag.value}px)`,
+        // While the finger is down the panel tracks it exactly; on release it
+        // animates back.
+        transition: drag.value ? '' : `transform var(--mf-duration-panel) var(--mf-ease-panel)`,
+      },
+)
+
+function close() {
+  closing.value = true
+  emit('close')
+}
+
 function onDown(e: PointerEvent) {
   if (!e.isPrimary) return
   if (e.pointerType !== 'touch' && e.button !== 0) return
@@ -59,20 +89,19 @@ function onMove(e: PointerEvent) {
 function onUp(e: PointerEvent) {
   if (activePointer !== e.pointerId) return
   activePointer = null
-  if (drag.value > 90) emit('close')
+  // Dragged far enough: hand over to the leave transition from wherever the
+  // finger left it, rather than snapping home first and sliding from there.
+  if (drag.value > 90) {
+    close()
+    return
+  }
   drag.value = 0
 }
 </script>
 
 <template>
-  <div class="fixed inset-0 z-40 flex flex-col justify-end bg-black/30" @click.self="emit('close')">
-    <section
-      class="flex h-[92%] flex-col rounded-t-2xl bg-mf-bg shadow-2xl"
-      :style="{
-        transform: `translateY(${drag}px)`,
-        transition: drag ? '' : 'transform 180ms ease',
-      }"
-    >
+  <div class="fixed inset-0 z-40 flex flex-col justify-end mf-scrim" @click.self="close">
+    <section class="flex h-[92%] flex-col rounded-t-2xl bg-mf-bg shadow-2xl" :style="panelStyle">
       <header
         class="shrink-0 cursor-grab touch-none px-4 pt-2 pb-3"
         @pointerdown="onDown"
@@ -87,7 +116,7 @@ function onUp(e: PointerEvent) {
             type="button"
             class="grid size-9 place-items-center rounded-full text-mf-green-dark"
             aria-label="Close"
-            @click="emit('close')"
+            @click="close"
           >
             <ChevronDown :size="22" :stroke-width="2" />
           </button>

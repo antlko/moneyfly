@@ -62,7 +62,9 @@ sync:
 }
 
 func TestLoadEnvOverridesFile(t *testing.T) {
-	dir := write(t, "server:\n  addr: \":8080\"\n")
+	// Deliberately not DefaultAddr: if the file said the same thing as the
+	// default, this would pass even if the file were ignored entirely.
+	dir := write(t, "server:\n  addr: \":9999\"\n")
 	t.Setenv("MONEYFLY_ADDR", ":7070")
 
 	cfg, err := Load(dir)
@@ -139,6 +141,38 @@ func TestPaths(t *testing.T) {
 	}
 	if got, want := DBPath("/c"), filepath.Join("/c", "moneyfly.db"); got != want {
 		t.Errorf("DBPath = %q, want %q", got, want)
+	}
+}
+
+// An instance with no config.yaml — the documented way to run this from a bare
+// `docker run` — must still fetch rates. It did not: `enabled` was a plain bool
+// whose zero value is false, so every foreign-currency record sat outside the
+// totals forever, captioned "no exchange rate yet".
+func TestFXIsOnWhenUnconfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"no file at all", "", true},
+		{"fx section absent", "app:\n  default_currency: EUR\n", true},
+		{"fx present but silent about enabled", "fx:\n  refresh_at: '05:00'\n", true},
+		{"explicitly on", "fx:\n  enabled: true\n", true},
+		{"explicitly off is still honoured", "fx:\n  enabled: false\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.yaml != "" {
+				dir = write(t, tc.yaml)
+			}
+			cfg, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := cfg.FX.On(); got != tc.want {
+				t.Errorf("FX.On() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

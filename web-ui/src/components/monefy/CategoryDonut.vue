@@ -3,6 +3,8 @@ import { useElementSize } from '@vueuse/core'
 import { computed, useTemplateRef } from 'vue'
 
 import { colorVar } from '@/lib/categories'
+import { fitFontPx } from '@/lib/fit'
+import { formatMoney } from '@/lib/money'
 import type { CategoryTotal } from '@/stores/dashboard'
 import type { Row } from '@/sync/types'
 import CategoryIcon from './CategoryIcon.vue'
@@ -52,9 +54,17 @@ const { width, height } = useElementSize(root)
  * readable size and simply does not draw the categories that do not fit (its own
  * screenshot shows fourteen of nineteen). They are never out of reach: the
  * record screen's grid is complete by construction.
+ *
+ * **The numbers are what set the chart's size, indirectly and strongly.** The
+ * donut fills the hole between the icon *centres*, so a wider target cell means
+ * fewer columns, a ring of icons that sits further in from the edges, and a
+ * smaller chart. At 150 a phone got three columns, the icons stood a seventh of
+ * the screen in from each edge, and the donut came out a third smaller than the
+ * reference's. These are sized so a 390pt phone gets four columns and five rows
+ * — the reference's own density.
  */
-const TARGET_CELL_W = 150
-const TARGET_CELL_H = 155
+const TARGET_CELL_W = 104
+const TARGET_CELL_H = 118
 const MIN_COLS = 3
 const MAX_COLS = 6
 const MIN_ROWS = 3
@@ -101,8 +111,17 @@ const cells = computed<Cell[]>(() => {
   })
 })
 
-/** Room between an icon's centre and the ring: the glyph, plus a gap. */
-const ICON_CLEARANCE = 56
+/**
+ * Room between an icon's centre and the ring: the glyph, plus a gap.
+ *
+ * A *share of the cell*, not a fixed 56px. Fixed, it was a constant subtracted
+ * twice from whatever space existed — comfortable on a roomy screen and ruinous
+ * on a narrow one, where 112px came out of a 200px span and left a chart smaller
+ * than the icons around it. As a fraction it stays in proportion: the frame gets
+ * tighter, the chart gets smaller, and neither swallows the other.
+ */
+const clearanceFor = (cellW: number, cellH: number) =>
+  clamp(Math.min(cellW, cellH) * 0.42, 34, 56)
 
 /** The donut fills the hole in the frame, staying circular. */
 const donut = computed(() => {
@@ -112,7 +131,8 @@ const donut = computed(() => {
   // cell of dead space all the way round and a needlessly small chart.
   const spanX = w - cellW
   const spanY = h - cellH
-  const diameter = Math.max(80, Math.min(spanX, spanY) - 2 * ICON_CLEARANCE)
+  const clearance = clearanceFor(cellW, cellH)
+  const diameter = Math.max(80, Math.min(spanX, spanY) - 2 * clearance)
   return {
     diameter,
     left: (w - diameter) / 2,
@@ -125,7 +145,26 @@ const donut = computed(() => {
     // the chart looked small even when the space was right.
     radius: diameter * 0.4,
     stroke: diameter * 0.2,
+    hole: diameter * 0.6,
   }
+})
+
+/**
+ * The two totals, sized to the hole they sit in.
+ *
+ * A fixed text size only ever fits by luck: it has to hold the longest figure
+ * the period can produce, inside a circle whose width depends on the window. At
+ * 320px the hole came out 54px across with the month's total written over the
+ * top of the ring — in the one element on the screen that exists to be read at
+ * a glance. The rule itself lives in `lib/fit.ts`, where it is tested.
+ */
+const centre = computed(() => {
+  const hole = donut.value.hole
+  const longest = Math.max(
+    formatMoney(props.incomeMinor, props.currency).length,
+    formatMoney(props.expenseMinor, props.currency).length,
+  )
+  return { hole, fontPx: fitFontPx(hole, longest) }
 })
 
 const circumference = computed(() => 2 * Math.PI * donut.value.radius)
@@ -301,25 +340,23 @@ const percent = (share: number) => `${Math.round(share * 100)}%`
       >
     </button>
 
+    <!--
+      Sized to the *hole*, not to the whole donut: centring inside the outer
+      circle looks identical until a figure grows, and then it grows out over
+      the ring instead of being constrained by anything.
+    -->
     <div
-      class="pointer-events-none absolute flex flex-col items-center justify-center gap-1"
+      class="pointer-events-none absolute flex flex-col items-center justify-center gap-1 leading-tight"
       :style="{
-        left: `${donut.left}px`,
-        top: `${donut.top}px`,
-        width: `${donut.diameter}px`,
-        height: `${donut.diameter}px`,
+        left: `${donut.cx - centre.hole / 2}px`,
+        top: `${donut.cy - centre.hole / 2}px`,
+        width: `${centre.hole}px`,
+        height: `${centre.hole}px`,
+        fontSize: `${centre.fontPx}px`,
       }"
     >
-      <MoneyAmount
-        :minor="incomeMinor"
-        :currency="currency"
-        class="text-xl font-semibold text-mf-green-dark"
-      />
-      <MoneyAmount
-        :minor="expenseMinor"
-        :currency="currency"
-        class="text-xl font-semibold text-mf-red-text"
-      />
+      <MoneyAmount :minor="incomeMinor" :currency="currency" class="font-semibold text-mf-green-dark" />
+      <MoneyAmount :minor="expenseMinor" :currency="currency" class="font-semibold text-mf-red-text" />
     </div>
   </div>
 </template>

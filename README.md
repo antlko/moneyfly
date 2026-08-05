@@ -38,7 +38,7 @@ dashboard. Your data lives on your server and in your browser, and nowhere else.
 Pull the published image:
 
 ```bash
-docker run -d --name moneyfly -p 8080:8080 -v moneyfly-config:/config ghcr.io/antlko/moneyfly:latest
+docker run -d --name moneyfly -p 5007:5007 -v moneyfly-config:/config ghcr.io/antlko/moneyfly:latest
 ```
 
 Or use Compose — [`docker-compose.yml`](docker-compose.yml) is ready to copy, and pastes straight
@@ -54,7 +54,7 @@ To build from source instead, uncomment the `build:` stanza in that file:
 docker compose up --build
 ```
 
-Then open <http://localhost:8080>. The first account you create claims the instance and becomes the
+Then open <http://localhost:5007>. The first account you create claims the instance and becomes the
 admin.
 
 Configuration is optional — a missing `config.yaml` starts with sensible defaults. To customise,
@@ -75,7 +75,7 @@ make dev-api
 make dev-ui
 ```
 
-Two servers side by side: Go on `:8080`, Vite on `:5173` proxying `/api` to it. Full instructions,
+Two servers side by side: Go on `:5007`, Vite on `:5173` proxying `/api` to it. Full instructions,
 including how to test sync between two devices, are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Roadmap

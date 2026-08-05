@@ -10,7 +10,7 @@ defineEmits<{ close: [] }>()
     for both, differing only in which edge they come from.
   -->
   <div
-    class="fixed inset-0 z-40 flex bg-black/30"
+    class="fixed inset-0 z-40 flex mf-scrim"
     :class="side === 'right' && 'justify-end'"
     @click.self="$emit('close')"
   >

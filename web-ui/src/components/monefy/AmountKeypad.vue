@@ -12,6 +12,11 @@ const ROWS: Key[][] = [
   ['.', '0', '=', '/'],
 ]
 
+// A key that does not visibly react has been pressed twice by the time anyone
+// is sure. There is no hover on a phone and no travel under the finger, so the
+// press *is* the whole feedback — hence a shrink and a fill, fast enough
+// (75ms) to land inside the tap rather than after it.
+//
 // The glyphs on the keys are not the values behind them: a hyphen-minus and an
 // asterisk are what the reducer understands, but − and × are what belong on a
 // button.
@@ -25,7 +30,7 @@ const glyph = (key: Key) => GLYPHS[key] ?? key
       v-for="key in ROWS.flat()"
       :key="key"
       type="button"
-      class="rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-2xl font-light text-mf-ink active:bg-mf-green-soft/40"
+      class="rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-2xl font-light text-mf-ink transition-[transform,background-color] duration-75 active:scale-95 active:bg-mf-green-soft/70"
       @click="emit('press', key)"
     >
       {{ glyph(key) }}

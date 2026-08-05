@@ -7,7 +7,7 @@
 # Copy to config.yaml and edit. Restart to apply (config is read at startup).
 
 server:
-  addr: ':8080'
+  addr: ':5007'
   # Externally reachable origin. Required as soon as any OIDC provider is
   # configured, because the provider must be handed an absolute redirect URI.
   base_url: ''

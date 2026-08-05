@@ -18,6 +18,20 @@ import (
 // StorageBase is the only base currency rates are stored against.
 const StorageBase = "EUR"
 
+// SourceManual marks a rate a person typed in rather than one a provider
+// published.
+//
+// It is a real source rather than a flag because the storage model is already
+// "one rate per (date, pair, source)": a hand-entered rate is simply another
+// observation of the same day, and the ordinary "latest write for that date
+// wins" rule then makes it override the provider's without a special case.
+//
+// It exists because the provider chain is not the whole world. A currency no
+// free feed publishes, an internal rate a household has agreed, or the rate
+// actually paid at a counter — none of those can be fetched, and without a way
+// to enter one those records sit outside every total indefinitely.
+const SourceManual = "manual"
+
 // DateLayout is the storage format of as_of_date.
 const DateLayout = "2006-01-02"
 

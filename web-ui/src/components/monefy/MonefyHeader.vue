@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ArrowLeftRight, EllipsisVertical, Funnel, Search } from '@lucide/vue'
 
+import SyncIndicator from './SyncIndicator.vue'
+
 defineProps<{ subtitle: string }>()
 defineEmits<{ filter: []; search: []; transfer: []; menu: [] }>()
 </script>
@@ -22,6 +24,8 @@ defineEmits<{ filter: []; search: []; transfer: []; menu: [] }>()
         <p class="truncate text-xs leading-tight text-white/80">{{ subtitle }}</p>
       </div>
 
+      <!-- Sync state lives here, where it is always in the same place. -->
+      <SyncIndicator />
       <button type="button" class="p-2" aria-label="Search" @click="$emit('search')">
         <Search :size="22" :stroke-width="1.8" />
       </button>

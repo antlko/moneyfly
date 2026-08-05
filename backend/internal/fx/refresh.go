@@ -125,7 +125,14 @@ func (r *Refresher) store(
 		if perr != nil {
 			return stored, rejected, perr
 		}
-		if previous != nil && previous.Rate != nil && previous.Rate.Sign() > 0 {
+		// A hand-entered rate is never the yardstick for plausibility. The check
+		// exists to catch a provider publishing nonsense, by comparing it with
+		// what a provider published before; measuring against a typed-in number
+		// would let one typo reject every real rate from then on, and the symptom
+		// — rates that silently stop moving — is the exact thing this is meant to
+		// prevent.
+		if previous != nil && previous.Source != SourceManual &&
+			previous.Rate != nil && previous.Rate.Sign() > 0 {
 			if change, ok := implausible(previous.Rate, rate, r.maxChange); ok {
 				rejected = append(rejected, Implausible{
 					Quote: quote, Previous: FormatRate(previous.Rate),

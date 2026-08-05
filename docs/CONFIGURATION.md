@@ -13,8 +13,12 @@ Start from `config/config.example.yaml`.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `addr` | `:8080` | Listen address. Overridden by `MONEYFLY_ADDR`. |
+| `addr` | `:5007` | Listen address. Overridden by `MONEYFLY_ADDR`. |
 | `base_url` | *empty* | Externally reachable origin, e.g. `https://money.example.com`. **Required once any OIDC provider is configured** — the provider must be handed an absolute redirect URI. Overridden by `MONEYFLY_BASE_URL`. |
+
+The default port is 5007 rather than the usual 8080: on a machine that self-hosts
+anything at all, 8080 is already taken, and the failure mode is a container that
+will not start for a reason that has nothing to do with this application.
 
 ## `app`
 
@@ -34,12 +38,18 @@ Start from `config/config.example.yaml`.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` (`true` in `config.example.yaml`) | Fetch daily exchange rates. With it off, records in a currency other than the base one are left out of totals and counted instead. |
+| `enabled` | `true` | Fetch daily exchange rates. Set it to `false` to turn the refresh off; records in a currency other than the base one are then left out of totals and counted instead. |
 | `refresh_at` | `04:00` | Local time of the daily refresh, `HH:MM`. The next occurrence is computed each cycle rather than ticking every 24h, so it does not drift across restarts or daylight saving. |
 | `providers` | `[open-er-api, fawazahmed0]` | Tried in order; the first that answers wins. Both are free and keyless. |
 
+**`enabled` defaults on, and absent is not the same as `false`.** It was a plain Go bool, so an
+instance with no `config.yaml` — a bare `docker run` against an empty volume, which is a supported
+way to run this — got the zero value and never fetched a single rate. Every foreign-currency record
+then sat outside every total indefinitely, under a caption reading "no exchange rate yet", with
+nothing on any screen or in any log to say the feature had never been switched on.
+
 Three things are rejected at startup rather than at 04:00 the next morning: an unknown provider id,
-a `refresh_at` that is not a time of day, and `enabled: true` with an empty provider list. An unknown
+a `refresh_at` that is not a time of day, and an enabled `fx` with an empty provider list. An unknown
 id used to be skipped in silence, and the only symptom was rates that quietly stopped updating.
 
 Nothing here is in a request path. A provider outage keeps the last stored rates and logs it; a
