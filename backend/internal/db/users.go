@@ -78,6 +78,84 @@ func (d *DB) CreateUser(email, passwordHash, displayName, baseCurrency string) (
 	return u, nil
 }
 
+// ListUsers returns every account on the instance, oldest first — the order
+// they claimed it in, which is also admin-first on a normal instance since
+// the first account created is always the admin.
+func (d *DB) ListUsers() ([]User, error) {
+	rows, err := d.Query(userSelect + ` ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []User{}
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName,
+			&u.BaseCurrency, &u.IsAdmin, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// ErrLastAdmin is returned when an action would leave the instance with no
+// admin at all — deleting the last admin, or demoting them. There is no
+// support desk on a self-hosted instance to recover from that, so it is
+// refused rather than allowed and left as a support burden.
+var ErrLastAdmin = errors.New("db: cannot remove the last admin")
+
+// adminCount is shared by DeleteUser and SetAdmin, both of which only need to
+// ask it when the account in question is itself an admin.
+func (d *DB) adminCount() (int, error) {
+	var n int
+	err := d.QueryRow(`SELECT count(*) FROM users WHERE is_admin = 1`).Scan(&n)
+	return n, err
+}
+
+// DeleteUser removes an account and, through the foreign keys every synced
+// table carries back to `users` (docs/ARCHITECTURE.md §1), every row it
+// owns — sessions, devices, identities and the full domain ledger. There is
+// no separate cleanup step because there is nothing left for one to do.
+func (d *DB) DeleteUser(id string) error {
+	u, err := d.UserByID(id)
+	if err != nil {
+		return err
+	}
+	if u.IsAdmin {
+		n, err := d.adminCount()
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrLastAdmin
+		}
+	}
+	_, err = d.Exec(`DELETE FROM users WHERE id = ?`, id)
+	return err
+}
+
+// SetAdmin promotes or demotes an account. Demoting the last admin is
+// refused for the same reason deleting them is.
+func (d *DB) SetAdmin(id string, isAdmin bool) error {
+	u, err := d.UserByID(id)
+	if err != nil {
+		return err
+	}
+	if u.IsAdmin && !isAdmin {
+		n, err := d.adminCount()
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrLastAdmin
+		}
+	}
+	_, err = d.Exec(`UPDATE users SET is_admin = ? WHERE id = ?`, isAdmin, id)
+	return err
+}
+
 // UserByEmail looks an account up case-insensitively.
 func (d *DB) UserByEmail(email string) (*User, error) {
 	return d.scanUser(d.QueryRow(userSelect+` WHERE lower(email) = ?`, normalizeEmail(email)))

@@ -82,6 +82,13 @@ func (s *Server) handlePush(c fiber.Ctx) error {
 		// looks exactly like the feature not working. The wake-up is a
 		// non-blocking signal; no provider is ever called from a request.
 		s.wakeFX()
+		// Same reasoning as wakeFX: notifying a webhook is fire-and-forget, so
+		// it never costs the response anything. res.Applied, not in.Ops — an
+		// op that lost its last-write-wins comparison is still well-formed,
+		// so the input list alone would report a transaction that never
+		// actually landed. See notifyWebhooks for why only this path fires
+		// them, not the recurring worker or the CSV importer.
+		s.notifyWebhooks(user.ID, res.Applied)
 	}
 
 	return c.JSON(pushResponse{

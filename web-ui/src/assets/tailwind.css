@@ -131,6 +131,39 @@
     padding-right: env(safe-area-inset-right, 0px);
   }
 
+  /*
+    At and above the desktop breakpoint (mirrored in useIsDesktop,
+    web-ui/src/lib/breakpoint.ts) the app stops being a single fixed-viewport
+    frame and goes back to an ordinary scrolling document. A dashboard's whole
+    point is showing more than fits in one screen at once — fighting that with
+    the same inset:0 box the phone frame needs would only move the scrollbar
+    into some inner div for no benefit. Nothing below this width ever sees
+    this rule, so the phone frame above is untouched.
+  */
+  @media (min-width: 640px) {
+    html,
+    body {
+      height: auto;
+      overflow: auto;
+      overscroll-behavior: auto;
+    }
+
+    /*
+      A definite height (100vh, not min-height) rather than the html/body
+      auto-height above — percentage heights only resolve against an ancestor
+      whose own height is definite, and every mobile screen reused as-is at
+      this width still asks for `h-full` (DesktopShell renders their existing
+      component unmodified). #app's own overflow stays visible, so content
+      taller than one screen is not clipped — it grows the document, which
+      html/body being `auto` and scrollable is what lets it actually scroll.
+    */
+    #app {
+      position: static;
+      inset: auto;
+      height: 100vh;
+    }
+  }
+
   body {
     background-color: var(--color-mf-bg);
     color: var(--color-mf-ink);
@@ -196,22 +229,6 @@
       -webkit-user-select: text;
       user-select: text;
     }
-  }
-}
-
-/*
-  Installed, the app does not pinch-zoom.
-
-  This is the difference between a document and an application. Zoom leaves a
-  phone-sized layout permanently wider than the screen — the header controls cut
-  in half at both edges, the month labels clipped, the whole frame pannable — and
-  in a standalone window there is no chrome, no zoom indicator and no way to ask
-  for 100% back. Every gesture then fights the pan instead of reaching the app.
-  A browser tab keeps zoom, because there it is a document and there is a way out.
-*/
-@media (display-mode: standalone), (display-mode: fullscreen) {
-  html {
-    touch-action: pan-x pan-y;
   }
 }
 

@@ -115,7 +115,7 @@ function swap() {
 </script>
 
 <template>
-  <div class="flex h-full flex-col bg-mf-bg">
+  <div class="flex h-full flex-col bg-mf-bg sm:mx-auto sm:w-full sm:max-w-md">
     <ScreenHeader title="Transfer" />
 
     <DateRow v-model:day="day" />

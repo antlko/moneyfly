@@ -42,18 +42,44 @@ export class NetworkError extends Error {
   }
 }
 
+/**
+ * How long a request gets before it is treated as unreachable.
+ *
+ * Without this, a `fetch` that never gets a response — a captive portal, a
+ * satellite link mid-handshake, a proxy that silently swallows the
+ * connection — simply never resolves, for as long as the browser's own
+ * connection timeout, which can be minutes. The one caller that awaits a
+ * request before rendering anything (`auth.bootstrap`, in the router guard)
+ * already has a documented offline fallback — the profile cached in
+ * `meta.userProfile` (stores/auth.ts) — that exists precisely for this
+ * moment. It only helps if the failing request actually fails; an installed
+ * PWA opened on a bad connection is exactly when this matters most; a fast
+ * connection never notices the timeout exists.
+ *
+ * 15s, not something tighter: most calls here are a single small JSON
+ * payload and would be safe well under a second, but a Monefy import commit
+ * parses and resolves thousands of rows server-side in the same request, and
+ * a timeout tuned for the common case would fire on the one case size
+ * actually matters for.
+ */
+const REQUEST_TIMEOUT_MS = 15_000
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   try {
     res = await fetch(path, {
       method,
       credentials: 'same-origin',
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: timeout,
     })
   } catch (e) {
-    // Everything inside this try is one call, so there is nothing else here that
-    // could throw and be mislabelled.
+    // A timeout aborts with the same DOMException a dropped connection would
+    // throw for any other reason, so it lands here exactly like one — same
+    // NetworkError, same offline fallback, because functionally that is
+    // what it is.
     throw new NetworkError(e)
   }
 
@@ -189,6 +215,123 @@ export const fxHistory = (quote: string, from: string, to: string) =>
  */
 export const fxSetRate = (quote: string, rate: string, asOf?: string) =>
   api.put<Rate>('/api/fx/rates', { quote, rate, asOf })
+
+// --- Import (see docs/MONEFY-PARITY.md §5) -----------------------------------------
+
+/** One distinct category or account name found in the file, and how it resolves. */
+export interface ImportNameStatus {
+  name: string
+  /** Category only — "expense" | "income". */
+  kind?: string
+  resolved: boolean
+  id?: string
+  viaAlias?: boolean
+  /** How many rows use this name — what tells you whether an unresolved one is worth pausing for. */
+  count: number
+}
+
+export interface ImportRowError {
+  line: number
+  reason: string
+}
+
+export interface ImportPreview {
+  totalRows: number
+  parseErrors: ImportRowError[]
+  categories: ImportNameStatus[]
+  accounts: ImportNameStatus[]
+}
+
+export interface ImportResult {
+  imported: number
+  alreadyImported: number
+  parseErrors: ImportRowError[]
+  unresolved: ImportRowError[]
+}
+
+/** Parses the file and reports what it will take to import cleanly. Writes nothing. */
+export const importMonefyPreview = (csv: string) =>
+  api.post<ImportPreview>('/api/import/monefy/preview', { csv })
+
+/**
+ * Re-parses the same text and writes every row it can resolve.
+ *
+ * `categoryMap` / `accountMap` are keyed on the CSV's own name for that
+ * category or account — exactly what `ImportPreview` reported as unresolved —
+ * mapping it to an existing id. Create a new category or account first, the
+ * ordinary way (`sync.write`), and map to the id that returns.
+ */
+export const importMonefyCommit = (
+  csv: string,
+  categoryMap: Record<string, string>,
+  accountMap: Record<string, string>,
+) => api.post<ImportResult>('/api/import/monefy/commit', { csv, categoryMap, accountMap })
+
+// --- Integrations ------------------------------------------------------------------
+
+export interface ApiToken {
+  id: string
+  name: string
+  createdAt: number
+  lastUsedAt: number
+}
+
+/** Only the create response ever carries the plaintext — see `token`. */
+export interface CreatedApiToken extends ApiToken {
+  token: string
+}
+
+export const listTokens = () => api.get<ApiToken[]>('/api/tokens')
+export const createToken = (name: string) => api.post<CreatedApiToken>('/api/tokens', { name })
+export const deleteToken = (id: string) => api.del<void>(`/api/tokens/${id}`)
+
+export interface Webhook {
+  id: string
+  name: string
+  url: string
+  secret: string
+  createdAt: number
+}
+
+export const listWebhooks = () => api.get<Webhook[]>('/api/webhooks')
+export const createWebhook = (name: string, url: string) =>
+  api.post<Webhook>('/api/webhooks', { name, url })
+export const deleteWebhook = (id: string) => api.del<void>(`/api/webhooks/${id}`)
+
+/**
+ * Where the browser downloads a CSV export from — a navigation (a plain
+ * `<a href>`), not a fetch: the response already carries
+ * `Content-Disposition: attachment`, so the browser does the rest.
+ */
+export const exportCsvUrl = (profile: 'native' | 'monefy') =>
+  `/api/export/transactions.csv?profile=${profile}`
+
+// --- Admin (root manages the others) ------------------------------------------------
+
+/** One account as the admin users screen sees it — never a password or a device list. */
+export interface AdminUser {
+  id: string
+  email: string
+  displayName: string
+  baseCurrency: string
+  isAdmin: boolean
+  createdAt: number
+}
+
+export const listUsers = () => api.get<AdminUser[]>('/api/admin/users')
+
+/**
+ * Provision an account directly, bypassing `registration` entirely — this is
+ * the admin acting, not the public signing up. The new person is not signed
+ * in by this call; they sign in themselves with the password given here.
+ */
+export const adminCreateUser = (email: string, password: string, displayName?: string) =>
+  api.post<AdminUser>('/api/admin/users', { email, password, displayName })
+
+export const adminDeleteUser = (id: string) => api.del<void>(`/api/admin/users/${id}`)
+
+export const setAdmin = (id: string, isAdmin: boolean) =>
+  api.put<AdminUser>(`/api/admin/users/${id}`, { isAdmin })
 
 /** Where to send the browser to start an OIDC flow. Not a fetch — a navigation. */
 export function oidcStartUrl(providerId: string, opts: { link?: boolean; redirect?: string } = {}) {

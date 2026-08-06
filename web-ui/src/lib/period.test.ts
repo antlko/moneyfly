@@ -7,6 +7,7 @@ import {
   monthBounds,
   monthLabel,
   monthOf,
+  nextOccurrence,
   periodBounds,
   periodLabel,
   shiftPeriod,
@@ -145,5 +146,31 @@ describe('periods', () => {
     expect(periodLabel({ kind: 'all', anchor: '2026-08-04' }, 'en-GB')).toBe('All time')
     expect(periodLabel({ kind: 'day', anchor: '2026-08-04' }, 'en-GB')).toBe('Tuesday, 4 August')
     expect(periodLabel({ kind: 'week', anchor: '2026-08-04' }, 'en-GB')).toBe('3 Aug – 9 Aug')
+  })
+})
+
+// Mirrors backend/internal/api/recurring_test.go's TestAdvanceDate — same
+// cases, same clamping, independently implemented on each side of the wire so
+// the "make recurring" sheet previews the date the worker will actually post.
+describe('nextOccurrence', () => {
+  it('steps daily and weekly', () => {
+    expect(nextOccurrence('2026-08-03', 'daily')).toBe('2026-08-04')
+    expect(nextOccurrence('2026-08-03', 'weekly')).toBe('2026-08-10')
+  })
+
+  it('steps monthly and yearly on an ordinary day', () => {
+    expect(nextOccurrence('2026-08-03', 'monthly')).toBe('2026-09-03')
+    expect(nextOccurrence('2026-08-03', 'yearly')).toBe('2027-08-03')
+  })
+
+  // The clamp this function exists for: naively constructing new Date(y, m+1,
+  // d) overflows into March the same way Go's time.AddDate does.
+  it('clamps monthly into a shorter month', () => {
+    expect(nextOccurrence('2026-01-31', 'monthly')).toBe('2026-02-28')
+    expect(nextOccurrence('2028-01-31', 'monthly')).toBe('2028-02-29')
+  })
+
+  it('clamps yearly off a leap day', () => {
+    expect(nextOccurrence('2028-02-29', 'yearly')).toBe('2029-02-28')
   })
 })

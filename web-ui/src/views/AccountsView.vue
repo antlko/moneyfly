@@ -118,7 +118,7 @@ function closeForm() {
       </template>
     </ScreenHeader>
 
-    <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]">
+    <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
       <ul class="divide-y divide-mf-muted/25">
         <li
           v-for="account in taxonomy.activeAccounts"

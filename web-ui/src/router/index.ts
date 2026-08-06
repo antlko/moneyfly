@@ -54,6 +54,36 @@ const router = createRouter({
       component: () => import('@/views/CurrenciesView.vue'),
     },
     {
+      path: '/recurring',
+      name: 'recurring',
+      component: () => import('@/views/RecurringView.vue'),
+    },
+    {
+      path: '/budgets',
+      name: 'budgets',
+      component: () => import('@/views/BudgetsView.vue'),
+    },
+    {
+      path: '/import',
+      name: 'import',
+      component: () => import('@/views/ImportView.vue'),
+    },
+    {
+      path: '/integrations',
+      name: 'integrations',
+      component: () => import('@/views/IntegrationsView.vue'),
+    },
+    {
+      // Root manages the others. Guarded twice: the router below sends a
+      // non-admin to `/` before this ever renders, and the API refuses the
+      // requests regardless (adminMW) — the route guard is for a clean
+      // redirect, not the actual boundary.
+      path: '/admin/users',
+      name: 'admin-users',
+      component: () => import('@/views/UsersView.vue'),
+      meta: { adminOnly: true },
+    },
+    {
       // `/sync` is the user-facing name — the dashboard's status line points at
       // it, so "Offline" has somewhere to lead. `/debug/sync` is the old path
       // and still works; it additionally shows the row-level debug tools.
@@ -93,6 +123,9 @@ router.beforeEach(async (to) => {
     return { name: 'signin', query: to.fullPath === '/' ? {} : { next: to.fullPath } }
   }
   if (to.name === 'signin' && auth.isSignedIn) {
+    return { name: 'home' }
+  }
+  if (to.meta.adminOnly && !auth.user?.isAdmin) {
     return { name: 'home' }
   }
   return true

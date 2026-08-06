@@ -60,8 +60,13 @@ running the dev servers.
   catch-all over the embedded FS), `web` (`//go:embed all:dist`, exposes `web.FS()`). Entry:
   `cmd/moneyfly/main.go`.
 - **Frontend:** Vue 3 `<script setup>`, Pinia stores, Dexie for IndexedDB, typed API client in
-  `src/api/`. One route tree for both form factors — the shell component picks the mobile Monefy
-  frame or the desktop dashboard, so resizing never changes the URL.
+  `src/api/`. One route tree for both form factors — `useIsDesktop()` (`src/lib/breakpoint.ts`,
+  640px, mirrored in a `tailwind.css` media query) is read in exactly two places: `App.vue` wraps
+  every route in `DesktopShell.vue` (sidebar nav, persistent) at that width, and `DashboardView.vue`
+  separately swaps its own content for `DesktopDashboardContent.vue` — the only screen genuinely
+  redesigned for desktop, since it is the only one the mobile layout (donut, swipe paging) does not
+  already suit. Every other screen renders its existing mobile component unmodified inside
+  `DesktopShell`'s content area; resizing never changes the URL either way.
 
 ## Invariants (breaking these causes real bugs)
 
@@ -141,6 +146,29 @@ running the dev servers.
   TEXT column; the fields the *server* queries are SQLite VIRTUAL generated columns over it. So
   adding a field is a client-side change, and only a new server-side query needs a migration. Don't
   add typed columns to a synced table — you would then have two sources of truth for one value.
+- **A background worker that writes synced rows on someone's behalf uses `deviceId = "server"`**, a
+  constant with no matching row in `devices` — never a real device's id. It only has to out-rank
+  nothing: a brand-new row starts at lamport 1, and an existing row's own advance is
+  `stored lamport + 1`, so a person's own concurrent edit — at their device's already-higher clock —
+  wins outright on lamport alone before `device_id` ever breaks a tie. `internal/api/recurring.go` is
+  the one caller today; the next background writer (an importer, a webhook processor) should reuse the
+  same constant rather than invent another sentinel.
+- **Adding calendar months or years to a date must clamp the day, not let it overflow.**
+  `time.AddDate(0, 1, 0)` on 31 January lands on 3 March, because Go normalises an out-of-range day
+  forward instead of stopping at the month's end — `new Date(y, m + 1, d)` sets the identical trap in
+  JavaScript. `addMonthsClamped` in `backend/internal/api/recurring.go` and `nextOccurrence` in
+  `web-ui/src/lib/period.ts` both clamp to the target month's last real day instead, independently, the
+  same way the FX arithmetic is mirrored rather than shared. Anything that recurs monthly or yearly
+  needs this, not only recurring records.
+- **Any outbound request to a user-supplied URL must check the resolved address, not the hostname,
+  and must check it at request time, not only when the URL was saved.** Webhooks
+  (`internal/api/webhooks.go`) are the one caller today: the dial function itself refuses a private,
+  loopback or link-local address, checked against what DNS resolves to for *that* request. Checking
+  the hostname once, at creation, is exactly what a DNS-rebinding attack defeats — a name that
+  resolves to a public address during validation and a private one once it is trusted — and on a
+  multi-user instance the person entering the URL is not necessarily the operator, so this is not a
+  theoretical caller. Anything else that ever fetches a user-supplied URL should dial through the
+  same checked client rather than a bare `http.Client`.
 - **A pointer gesture must track which pointer is down and check that a button is held.** A mouse
   emits `pointermove` while merely hovering, so a handler that looks at coordinates alone treats
   crossing the window as a drag — and if it then takes `setPointerCapture`, it steals every click
@@ -150,8 +178,45 @@ running the dev servers.
   against the *large* viewport, so the document is taller than the screen and the whole app scrolls —
   header under the clock, record buttons off the bottom, every vertical gesture fighting a page
   scroll. See docs/MONEFY-PARITY.md §"The app frame" for the rest of the PWA rules that go with it
-  (`black-translucent` status bar, no pinch-zoom when installed, no text selection under
-  `pointer: coarse`, and putting the shell back after the keyboard closes).
+  (`black-translucent` status bar, no pinch-zoom, no text selection under `pointer: coarse`, and
+  putting the shell back after the keyboard closes).
+- **At the desktop breakpoint, `#app` gets an explicit `height: 100vh`, not `min-height`.** Every
+  mobile screen reused as-is on desktop (everything except the dashboard, per `DesktopShell`) still
+  has `h-full` on its root, and a percentage height only resolves against an ancestor whose own
+  height is *definite* — `min-height` alone does not make one, so a child asking for `height: 100%`
+  inside a `min-height`-only ancestor can silently collapse. `html`/`body` stay `height: auto` so the
+  document can still grow past one screen for the dashboard's own longer content; only `#app` needs
+  the fixed number, and its `overflow` is left alone so taller content is not clipped, just pushes
+  the document taller.
+- **`showPicker()` on a hidden `<input type="date">` must be called from a click on that same input,
+  not from a wrapping `<button>` around it.** A real iPhone enforces same-element activation for this
+  and refuses it otherwise — no error, nothing opens, indistinguishable from the control being dead.
+  Desktop Chrome/Firefox don't enforce this (any click works), which is exactly how the wrapping-button
+  shape passed every check that wasn't on real iOS hardware. `DateRow` and `FilterDrawer`'s "Choose
+  date" put the real `<input>` on top (`absolute inset-0`, real `pointer-events`), covering the whole
+  row, with the click handler on the input itself; the icon/label/chevron underneath are
+  `pointer-events-none` decoration. Also listen on both `input` and `change` — Android's full-screen
+  calendar dialog doesn't reliably raise `input` when its OK button commits.
+- **`inset-0` does not size a replaced element** (`<input>`, `<img>`, `<video>`) **the way it sizes a
+  `<div>`.** An absolutely positioned `<div>` with `inset-0` fills its positioned ancestor; an
+  `<input>` can keep its own intrinsic width regardless. Add `h-full w-full` explicitly wherever a
+  replaced element needs to actually cover its container — the two date inputs above both need it.
+- **`:active` is dead on iOS until the document has a touch listener.** Safari applies it only if one
+  is registered somewhere, so every pressed state in the app — keypad, record buttons, account rows —
+  silently did nothing on an iPhone, which reads as taps not registering. `main.ts` registers an empty
+  passive `touchstart` listener for exactly this and nothing else; don't remove it.
+- **Nothing may still be moving where a finger is about to land.** The browser hit-tests where an
+  element *is*, not where the frame you reacted to drew it, so content that animates into place eats
+  the first tap aimed at it. `SwipePager` carries the old period out but brings the new one up
+  *at rest*, fading rather than sliding, for this reason — a sliding arrival made every button need
+  two taps for the length of the animation.
+- **Never give `html` or `body` a `touch-action` value, not even to block pinch-zoom.** Declaring any
+  panning value on the document root puts WebKit's gesture recognizer in a state where the tap right
+  after a swipe — anywhere in the app — is consumed as "stop the pan" instead of delivered as a click,
+  so every button needed two taps immediately after paging the month carousel. Zoom is disabled at the
+  viewport instead (`maximum-scale=1, user-scalable=no` in index.html), which never touches touch
+  gesture recognition. `touch-action` stays fine on individual elements that actually drag
+  (`SwipePager`, sheet handles) — the trap is specifically the document root.
 - **…and it must not believe every `lostpointercapture` it sees.** A *touch* pointer is implicitly
   captured by whatever element it lands on, so calling `setPointerCapture` on an ancestor revokes
   that — and the descendant's `lostpointercapture` **bubbles** straight into the ancestor's own
@@ -166,6 +231,16 @@ running the dev servers.
   initialised, never nil (`api.rejections`), and only the HTTP layer decides what "offline" means, by
   wrapping a rejected `fetch` in `NetworkError` (`api/http.ts`). Never classify a network failure by
   error *type* further up: `TypeError` is also what a plain bug produces.
+- **Every request through `api/http.ts` carries a 15s `AbortSignal.timeout`.** Without it, a `fetch`
+  that never gets a response — a captive portal, a proxy that silently drops the connection — simply
+  never resolves, and `auth.bootstrap()` awaits one in the router guard before rendering anything: an
+  installed PWA opened on a bad connection would sit on a blank screen for as long as the browser's
+  own connection timeout, which can be minutes, instead of reaching the offline fallback that already
+  exists for exactly this (`meta.userProfile`, `stores/auth.ts`). The abort surfaces as the same
+  `NetworkError` a dropped connection would, so nothing downstream needs to know the difference. 15s
+  rather than something tighter because the CSV import commit parses and resolves thousands of rows
+  server-side inside one request — a timeout tuned for a typical small JSON payload would fire on the
+  one call size actually matters for.
 - **Overlays animate by wrapping the `v-if` in a `<Transition>` at the call site**, not by a keyframe
   inside the component: a `v-if` alone cannot animate a departure, and the departure is the half
   people notice. The named transitions (`mf-fade`, `mf-sheet`, `mf-drawer-l/r`, `mf-page`) live in

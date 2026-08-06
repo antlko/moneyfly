@@ -125,6 +125,14 @@ ways — a horizontal swipe anywhere on the body, and a tap on a neighbouring la
 of the way on release, or springs back if the gesture was too short. A discrete jump on release reads
 as a bug even when the resulting state is right.
 
+**The old period leaves; the new one does not arrive — it is already there, and fades up.** The
+asymmetry is a bug fix, not a flourish. The browser hit-tests where an element *is*, not where the
+frame you reacted to drew it, so for the whole of a sliding arrival every category icon is somewhere
+other than where it looks. Aiming at one the instant the new month appears lands on empty background;
+pressing again half a second later works. That was the "every button needs two taps after a swipe"
+report, and it was as reproducible as the animation was long. Nothing may still be travelling where a
+finger is about to land.
+
 ### View toggle row
 
 `≡` on the left switches between donut and list. The balance pill is centred; it is red when the
@@ -215,7 +223,7 @@ right. White fill, thick coloured border, coloured glyph. They must sit above
 ## 2. Record screen
 
 One screen, two steps. A back chevron on the left of the header, `New expense` / `New income`
-centred, a "make recurring" control on the right.
+centred, a "make recurring" control on the right (only on a new record — see §2a).
 
 **The same screen edits an existing record** (`/edit/:id`): the fields are identical, and sending
 someone somewhere that looks different to fix the thing they got wrong three taps ago is
@@ -290,6 +298,66 @@ counts the case where the amount is already entered.)
 
 ---
 
+## 2a. Recurring records
+
+The Repeat control (⟳, top right, new records only) opens a sheet of four frequencies — day, week,
+month, year. Picking one does not open a second form: it arms the record you are already filling in
+and returns you to it, exactly where you left off, keypad and category choice untouched.
+
+**Saving then does two things, never one without the other: it records what you typed, dated today
+(or whatever the date row shows), and separately schedules the next occurrence.** There is no way to
+schedule a rule without also recording its first instance. This is deliberate — "I am paying rent
+today, and it repeats monthly" is the case the control exists for, and landing on a dashboard where
+today's payment is invisible until next month would read as the record having failed to save.
+
+**The Repeat icon is the only indication a rule is armed, so it is also the way out**: tapping it
+again while armed cancels, rather than reopening the sheet. A category has not been chosen yet the
+first time most people reach for this control — the record screen shows it from the amount step
+onward — so choosing a frequency before a category routes through the same category grid `CHOOSE
+CATEGORY` already would, and whichever category is picked there is the one the rule gets. There is no
+separate "recurring category" to keep in sync with it.
+
+**Managing existing rules is delete-and-recreate, not edit.** The Recurring screen (right drawer →
+Recurring) lists every rule — category, amount, frequency, next date — with the same tombstone-plus-
+undo delete as everywhere else in the app and deliberately no edit screen: building a second form that
+mirrors the record screen's fields, just for rules, is two places a future field has to be added
+instead of one. Changing an amount or a schedule is deleting the rule and making a new record
+recurring, which is already the fastest path to either.
+
+What actually materialises each occurrence is a server-side worker, not this screen — see
+docs/ARCHITECTURE.md §4c. The date shown as "next" is the stored `nextOn`, not something this screen
+computes; `lib/period.ts`'s `nextOccurrence` only predicts the date the *next* sheet-confirm will
+write, so what you see here always matches what the worker is about to post.
+
+---
+
+## 2b. Budgets
+
+Unlike every other section here, this screen was not measured against a reference screenshot — the
+`budget` schema (`limitMinor`, `currency`, an optional `categoryId`, an optional `period`) predates
+this phase, and the UI is a deliberately small v1 built to it rather than a Monefy likeness. Worth
+recording *as* a scope decision, so it reads as a choice rather than an oversight next time this
+screen is touched:
+
+- **Every budget created here recurs every calendar month.** The schema also allows a fixed `period`
+  (`YYYY-MM`) for a one-off month — an absent `period` is what "every month" means, per
+  `validateBudget` in `backend/internal/sync/op.go` — but the create sheet does not offer a month
+  picker. The common case is "cap my food spending, every month," not "cap it this one month."
+- **A budget is always in the base currency.** The sheet does not offer a currency picker. A record in
+  a different currency still counts toward it, converted at the rate on the day it happened — the same
+  rule `dashboard.ts`'s totals use — so this is a smaller, not a different, calculation.
+- **An absent category means an overall cap**, shown first in the list, ahead of each category's own
+  budget alphabetically.
+- **The progress bar is two colours, not three.** Green under the limit, red at or over it. A closer
+  Monefy likeness shades amber approaching the limit; that needs a third colour token this pass did
+  not have a considered value for, so it was left out rather than guessed.
+- **A row spent in a currency with no known rate is not silently left out of the total** — the
+  invariant in CLAUDE.md that a missing rate must be visible, not just absent, applies here exactly as
+  it does on the dashboard. It is counted and surfaced as a small red line under the bar rather than a
+  dashboard-style banner, because a whole banner subsystem for one screen was more than this warranted.
+
+---
+
 ## 3. Default categories
 
 Expense: Appliance, Bills, Clothes, Communication, Eating out, Entertainment, Family, Food, Gifts,
@@ -331,10 +399,18 @@ Three more things follow from being an app rather than a document:
   paint under the status bar, and the only one that makes `env(safe-area-inset-top)` report a real
   number — with `default` the header's `pt-safe-t` pads nothing and the app sits in a box below the
   clock. The header is green with white text already, which is what the status bar's glyphs land on.
-* **Installed, it does not pinch-zoom** (`touch-action: pan-x pan-y` under
-  `@media (display-mode: standalone)`). Zoom leaves a phone-sized layout permanently wider than the
-  screen — controls cut in half at both edges, month labels clipped, the frame pannable — and a
-  standalone window has no chrome and no way to ask for 100% back. A browser tab keeps zoom.
+* **It does not pinch- or double-tap-zoom, anywhere** (`maximum-scale=1, user-scalable=no` on the
+  viewport meta, index.html). Zoom leaves a phone-sized layout permanently wider than the screen —
+  controls cut in half at both edges, month labels clipped, the frame pannable — and a standalone
+  window has no chrome and no way to ask for 100% back, so it is worst there, but a browser tab is
+  not spared either: this app has no layout that benefits from being zoomed.
+
+  A CSS `touch-action` rule on `html` was tried first, scoped to `display-mode: standalone` so a
+  browser tab kept zoom. It was taken back out: declaring *any* panning value on the document root —
+  even only to withhold pinch-zoom — puts WebKit's gesture recognizer in a state where the tap
+  immediately after a swipe, anywhere in the app, gets consumed as "stop the pan" rather than
+  delivered as a click. That read as every button needing two taps right after paging the month
+  carousel. The viewport meta reaches the same goal without touching touch gesture recognition.
 * **Text is not selectable under `pointer: coarse`.** A drag starting on a label became a selection,
   so the swipe never reached the pager. Desktop keeps its text, inputs keep theirs everywhere.
 
@@ -458,3 +534,32 @@ A naive importer that looks up hardcoded category names lost **≈237 of 1,683 r
 **Therefore an unrecognised category blocks the batch.** It is never auto-created, never coerced,
 never zeroed — the import screen makes the operator map it. Silent auto-creation is how `Utilities`
 vanished; silent lookup failure is how `Communication` did.
+
+### How the importer applies this
+
+Built (`backend/internal/importer`, `internal/api/handlers_import.go`, `web-ui/src/views/ImportView.vue`).
+Two requests, mirroring the screen's two steps:
+
+- **Preview only parses.** It reports every distinct category and account name in the file, how each
+  resolves (an exact case-insensitive match, the small alias table below, or neither), and how many
+  rows each one covers — the count is what tells the operator whether an unresolved name is worth
+  pausing for or is one stray row. Nothing is written.
+- **Commit re-parses the same text** rather than trusting anything the client remembers from preview,
+  for the same reason the sync protocol never trusts a client's idea of state, and writes every row it
+  can resolve — checking the operator's own mapping first, then the exact match, then the alias table.
+  A row that still does not resolve is reported back with its line number and skipped; it never blocks
+  the rows around it.
+- **The alias table is deliberately small** — only the four renames this section's own table above
+  documents (`HotelTrip`, `Clouth`, `Studing`, `Sport`). Everything else, including every non-English
+  name, surfaces in the mapping screen instead of being guessed at: a wrong guess here fails exactly
+  like a correct match, silently, which is a worse outcome than asking once.
+- **De-duplication is a natural key** — `sha256(date|account|category|kind|amount|currency|note)` plus
+  how many identical-looking rows came before it in the file — checked against the same
+  `idx_txn_natural_key` index the recurring worker uses (docs/ARCHITECTURE.md §4c) and never a
+  constraint. This is what makes re-importing an overlapping export (the normal way someone exports
+  "since last time") a no-op for the rows already there instead of a duplicated ledger, while two
+  genuinely separate purchases of the same amount on the same day still both land.
+- **New categories and accounts are created the ordinary way**, through the record screen's own sync
+  write, not by this endpoint — mapping a CSV name to "create new" opens the same category sheet
+  `RecordView` does and simply feeds the resulting id back into the mapping. The import endpoint only
+  ever resolves names to ids; it has no path that invents a row on its own.

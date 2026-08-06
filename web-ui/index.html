@@ -14,10 +14,20 @@
       `interactive-widget=resizes-content` keeps the on-screen keyboard from
       sliding the whole fixed shell up out of view; browsers that do not know it
       ignore it.
+
+      `maximum-scale=1, user-scalable=no` is what stops pinch/double-tap zoom,
+      in a browser tab and installed alike — not a CSS `touch-action` rule.
+      `touch-action` was tried first and taken back out: declaring a panning
+      value on `html` at all (even just to block pinch-zoom) puts WebKit's
+      gesture recognizer in a state where the *next tap anywhere in the app*,
+      right after any swipe, gets consumed as "stop the pan" instead of
+      delivered as a click — which read as every button needing two taps
+      immediately after paging the month carousel. The viewport meta reaches
+      the same goal without touching touch gesture recognition at all.
     -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="theme-color" content="#7ec89f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -34,9 +44,46 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="moneyfly" />
     <title>moneyfly</title>
+    <!--
+      Inline, not in tailwind.css: this has to render before that stylesheet
+      — itself the biggest thing standing between "tap the icon" and anything
+      visible at all — has even finished loading, which is the exact gap it
+      exists to cover. `Vue.mount('#app')` replaces this markup outright, the
+      same as it would any other pre-existing content, so nothing here needs
+      cleaning up once the real app takes over.
+    -->
+    <style>
+      .boot-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #eefaf1;
+      }
+      .boot-splash img {
+        width: 56px;
+        height: 56px;
+        animation: boot-splash-pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes boot-splash-pulse {
+        0%,
+        100% {
+          opacity: 0.35;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash img {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app"><div class="boot-splash"><img src="/icon.svg" alt="" /></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

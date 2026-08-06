@@ -82,6 +82,7 @@ func New(configDir string) (*Server, error) {
 
 	go s.retentionLoop()
 	go s.fxLoop()
+	go s.recurringLoop()
 	return s, nil
 }
 
@@ -153,6 +154,32 @@ func (s *Server) routes() {
 	app.Get("/api/sync/pull", authed, s.handlePull)
 	app.Get("/api/sync/snapshot", authed, s.handleSnapshot)
 	app.Get("/api/sync/events", authed, s.handleEvents)
+
+	// Import. Preview never writes; commit re-parses rather than trusting
+	// anything the client remembers from the preview response — see
+	// handlers_import.go.
+	app.Post("/api/import/monefy/preview", authed, s.handleImportPreview)
+	app.Post("/api/import/monefy/commit", authed, s.handleImportCommit)
+
+	// Integrations. Tokens and webhooks are never synced — both are
+	// integration secrets, same as fx_rate and OIDC client secrets
+	// (docs/ARCHITECTURE.md §1).
+	app.Get("/api/tokens", authed, s.handleListAPITokens)
+	app.Post("/api/tokens", authed, s.handleCreateAPIToken)
+	app.Delete("/api/tokens/:id", authed, s.handleDeleteAPIToken)
+	app.Get("/api/webhooks", authed, s.handleListWebhooks)
+	app.Post("/api/webhooks", authed, s.handleCreateWebhook)
+	app.Delete("/api/webhooks/:id", authed, s.handleDeleteWebhook)
+
+	// Export.
+	app.Get("/api/export/transactions.csv", authed, s.handleExportCSV)
+
+	// Admin. adminMW must run after authed — it reads userLocal, which only
+	// authed populates.
+	app.Get("/api/admin/users", authed, s.adminMW, s.handleListUsers)
+	app.Post("/api/admin/users", authed, s.adminMW, s.handleAdminCreateUser)
+	app.Delete("/api/admin/users/:id", authed, s.adminMW, s.handleAdminDeleteUser)
+	app.Put("/api/admin/users/:id", authed, s.adminMW, s.handleSetAdmin)
 
 	// SPA fallback — must be registered last.
 	app.Use(s.serveSPA)

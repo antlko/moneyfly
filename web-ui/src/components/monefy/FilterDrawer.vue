@@ -205,24 +205,36 @@ function chooseDate(event: Event) {
         "Choose date" jumps to the period containing a day without changing which
         kind of period is selected — picking a date while on Year should show
         that year, not that day.
+
+        A `<div>`, not a `<button>`: see DateRow for why the real `<input>` has
+        to be the element the tap actually lands on. A real iPhone refuses
+        `showPicker()` fired from a click on a *different* element than the
+        input — no error, nothing opens, indistinguishable from dead — so the
+        input covers the whole row and carries the click itself; "Choose date"
+        is a label sitting under it, not the control. `h-full w-full` alongside
+        `inset-0` because `<input>` is a replaced element — `inset-0` alone
+        stretches a `<div>`, not this.
       -->
-      <button
-        type="button"
-        class="relative mt-2 block w-full rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3 text-center text-base"
-        @click="openDatePicker"
+      <div
+        class="relative mt-2 w-full rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3 text-center text-base"
       >
-        Choose date
-        <!-- Same reasoning as DateRow: an overlaid input does not open on desktop. -->
+        <span class="pointer-events-none">Choose date</span>
+        <!--
+          Listened to on both `input` and `change`: Android's full-screen
+          calendar dialog for this control does not reliably raise `input` when
+          its OK button commits a date.
+        -->
         <input
           ref="dateInput"
           type="date"
           :value="period.anchor"
-          class="pointer-events-none absolute size-0 opacity-0"
-          tabindex="-1"
+          class="absolute inset-0 h-full w-full cursor-pointer touch-manipulation opacity-0"
           aria-label="Choose date"
+          @click="openDatePicker"
           @input="chooseDate"
+          @change="chooseDate"
         />
-      </button>
+      </div>
     </div>
   </AppDrawer>
 </template>

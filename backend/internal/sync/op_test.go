@@ -66,7 +66,7 @@ func TestValidateAcceptsGoodOps(t *testing.T) {
 		op("category", "c1", `{"name":"Food","kind":"expense"}`),
 		op("budget", "b1", `{"limitMinor":50000,"currency":"EUR"}`),
 		op("budget", "b2", `{"limitMinor":50000,"currency":"EUR","period":"2026-08"}`),
-		op("recurring_rule", "r1", `{"freq":"monthly","nextOn":"2026-09-01"}`),
+		op("recurring_rule", "r1", `{"kind":"expense","freq":"monthly","nextOn":"2026-09-01","amountMinor":-1200,"currency":"EUR"}`),
 		op("user_setting", "view.mode", `{"value":"donut"}`),
 	}
 	for _, o := range good {
@@ -94,7 +94,8 @@ func TestValidateRejects(t *testing.T) {
 		{"lowercase currency", op("txn", "t", `{"kind":"expense","occurredOn":"2026-08-03","amountMinor":1,"currency":"eur"}`)},
 		{"income category kind on a category", op("category", "c", `{"name":"X","kind":"transfer"}`)},
 		{"bad budget period", op("budget", "b", `{"limitMinor":1,"currency":"EUR","period":"August"}`)},
-		{"bad recurrence", op("recurring_rule", "r", `{"freq":"fortnightly","nextOn":"2026-09-01"}`)},
+		{"bad recurrence", op("recurring_rule", "r", `{"kind":"expense","freq":"fortnightly","nextOn":"2026-09-01","amountMinor":-1200,"currency":"EUR"}`)},
+		{"recurring rule missing amount", op("recurring_rule", "r", `{"kind":"expense","freq":"monthly","nextOn":"2026-09-01","currency":"EUR"}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

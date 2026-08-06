@@ -11,13 +11,15 @@ import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import DateRow from '@/components/monefy/DateRow.vue'
 import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
+import RecurringSheet from '@/components/monefy/RecurringSheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
 import { exponent, toMajor, toMinor } from '@/lib/money'
-import { today } from '@/lib/period'
+import { nextOccurrence, today, type RecurringFreq } from '@/lib/period'
 import { db } from '@/db'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useRecurringStore } from '@/stores/recurring'
 import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
@@ -38,6 +40,7 @@ const route = useRoute()
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
 const settings = useSettingsStore()
+const recurring = useRecurringStore()
 
 /*
  * One screen, two steps — the amount, then the category. Not two routes: going
@@ -50,6 +53,16 @@ const day = ref(today())
 const note = ref('')
 const showNewCategory = ref(false)
 const showAccounts = ref(false)
+const showRecurringPicker = ref(false)
+/**
+ * The frequency armed by the Repeat control, if any.
+ *
+ * A choice made here, not a category: tapping Repeat before a category is
+ * picked sends the same person through the same grid `confirm()` already
+ * would, and whichever category they land on is the one the rule gets —
+ * there is no separate "recurring category" to keep in sync with it.
+ */
+const pendingFreq = ref<RecurringFreq | null>(null)
 
 /** The row being edited, once it has been read out of the replica. */
 const existing = ref<Row | null>(null)
@@ -151,6 +164,26 @@ function confirm() {
   else toCategories()
 }
 
+/**
+ * Toggling the Repeat control while it is already armed cancels it — the
+ * button is the only indication a rule is about to be created, so it also
+ * has to be the way out.
+ */
+function askRecurring() {
+  if (pendingFreq.value) {
+    pendingFreq.value = null
+    return
+  }
+  if (!hasAmount.value) return
+  showRecurringPicker.value = true
+}
+
+function pickFreq(freq: RecurringFreq) {
+  showRecurringPicker.value = false
+  pendingFreq.value = freq
+  confirm()
+}
+
 function pickAccount(next: Row) {
   showAccounts.value = false
   accountId.value = String(next.id)
@@ -166,6 +199,9 @@ async function record(category: Row) {
 
   const minor = toMinor(major, currency.value)
   const payingAccount = String(account.value?.id ?? DEFAULT_ACCOUNT_ID)
+  // Expenses are stored negative, the way the Monefy export writes them, so
+  // summing a month needs no knowledge of which kind a row is.
+  const amountMinor = kind.value === 'expense' ? -minor : minor
   // An edit reuses the row id, so it travels as an ordinary last-write-wins op
   // and merges with whatever another device did to the same record.
   await sync.write(
@@ -173,9 +209,7 @@ async function record(category: Row) {
     {
       kind: kind.value,
       occurredOn: day.value,
-      // Expenses are stored negative, the way the Monefy export writes them, so
-      // summing a month needs no knowledge of which kind a row is.
-      amountMinor: kind.value === 'expense' ? -minor : minor,
+      amountMinor,
       currency: currency.value,
       categoryId: category.id,
       accountId: payingAccount,
@@ -183,6 +217,25 @@ async function record(category: Row) {
     },
     props.id,
   )
+
+  // The Repeat control saves this occurrence exactly like any other record,
+  // above, and additionally schedules the next one — never the other way
+  // round, so "make it recurring" never costs the thing you are looking at
+  // right now.
+  if (pendingFreq.value) {
+    const freq = pendingFreq.value
+    pendingFreq.value = null
+    await recurring.create({
+      kind: kind.value,
+      freq,
+      nextOn: nextOccurrence(day.value, freq),
+      amountMinor,
+      currency: currency.value,
+      categoryId: category.id,
+      accountId: payingAccount,
+      note: note.value.trim(),
+    })
+  }
 
   // Remember it for the next record. Written after the record itself, so a
   // failure here cannot cost the thing the screen was actually for.
@@ -239,7 +292,7 @@ function back() {
 </script>
 
 <template>
-  <div class="flex h-full flex-col bg-mf-bg">
+  <div class="flex h-full flex-col bg-mf-bg sm:mx-auto sm:w-full sm:max-w-md">
     <ScreenHeader :title="title" :on-back="back">
       <template #actions>
         <button
@@ -254,9 +307,10 @@ function back() {
         <button
           v-else
           type="button"
-          class="grid size-11 place-items-center"
-          aria-label="Make recurring"
-          @click="toast('Recurring records arrive in a later phase')"
+          class="grid size-11 place-items-center rounded-full"
+          :class="pendingFreq && 'bg-white/25'"
+          :aria-label="pendingFreq ? 'Cancel repeat' : 'Make recurring'"
+          @click="askRecurring"
         >
           <Repeat :size="22" :stroke-width="1.8" />
         </button>
@@ -333,6 +387,14 @@ function back() {
         :kind="kind"
         @cancel="showNewCategory = false"
         @create="createCategory"
+      />
+    </Transition>
+
+    <Transition name="mf-sheet">
+      <RecurringSheet
+        v-if="showRecurringPicker"
+        @select="pickFreq"
+        @close="showRecurringPicker = false"
       />
     </Transition>
   </div>

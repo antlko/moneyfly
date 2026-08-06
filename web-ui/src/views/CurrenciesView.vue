@@ -159,7 +159,7 @@ const STALE_AFTER_DAYS = 5
       </template>
     </ScreenHeader>
 
-    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))]">
+    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
       <section class="rounded-2xl bg-mf-surface p-4">
         <h2 class="mb-1 font-medium">Base currency</h2>
         <p class="text-2xl">{{ dashboard.baseCurrency }}</p>

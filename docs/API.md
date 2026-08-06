@@ -3,8 +3,10 @@
 JSON over HTTP, same origin as the SPA. Errors are always `{"error": "message"}` with a meaningful
 status — there is no second error shape anywhere.
 
-> Health, auth, sync and exchange rates exist today (phases 0–5). This document is filled in as
-> later phases land.
+> Health, auth, sync, exchange rates, CSV import, export, API tokens, webhooks and admin user
+> management exist today. This document is filled in as later phases land. Budgets and recurring
+> records (phases 6–7) introduced no new endpoints — both ride the sync entities already listed
+> below; see docs/ARCHITECTURE.md §4c for the recurring worker.
 
 ## Conventions
 
@@ -174,6 +176,114 @@ The exponent table — how many decimal places each currency's minor unit implie
 
 The client ships its own copy of this so it can format from the first paint offline; the endpoint
 exists so the two can be compared after a server upgrade.
+
+## Import
+
+Both require a session. See [MONEFY-PARITY.md §5](MONEFY-PARITY.md) for the CSV format and why an
+unrecognised category or account is never guessed at, and `internal/importer` for the resolver.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/import/monefy/preview` | `{csv}` → parse only, nothing written |
+| `POST` | `/api/import/monefy/commit` | `{csv, categoryMap, accountMap}` → writes what resolves |
+
+```jsonc
+// preview response
+{
+  "totalRows": 1683,
+  "parseErrors": [{ "line": 45, "reason": "date \"31.13.2021\" is not DD.MM.YYYY" }],
+  "categories": [
+    { "name": "Utilities", "kind": "expense", "resolved": false, "count": 119 },
+    { "name": "HotelTrip", "kind": "expense", "resolved": true, "id": "cat:hotel-trip",
+      "viaAlias": true, "count": 58 }
+  ],
+  "accounts": [
+    { "name": "EUR", "resolved": true, "id": "acc:eur", "count": 340 }
+  ]
+}
+```
+
+`categoryMap` / `accountMap` on commit are keyed on the CSV's own name for that category or
+account — exactly what preview reported as unresolved — mapping it to an existing id. There is no
+way to create one through this endpoint: create it the ordinary way first (an op through
+`/api/sync/push`, same as the record screen does) and map to the id that returns. Commit re-parses
+the same `csv` rather than trusting anything from the preview response, for the same reason the sync
+protocol never trusts a client's idea of state — what a name resolves to may have changed in the
+seconds between the two requests.
+
+```jsonc
+// commit response
+{
+  "imported": 1683,       // newly written
+  "alreadyImported": 12,  // matched an existing natural key — a re-run of an overlapping export
+  "parseErrors": [ /* same shape as preview */ ],
+  "unresolved": [{ "line": 45, "reason": "category \"Utilities\" is not mapped" }]
+}
+```
+
+A row is never coerced onto some other category and never silently dropped: it either writes, or it
+is one of `parseErrors` (could not be read at all) or `unresolved` (read fine, but its category or
+account was not mapped), always with the line number a spreadsheet would show.
+
+## API tokens
+
+A named, long-lived credential for scripted access — `Authorization: Bearer <token>` against any
+route a session cookie would authenticate, `authMW` in `internal/api/middleware.go`. Unlike a
+session it has no device and no expiry.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/tokens` | List this account's tokens — never the value, only `id`, `name`, `createdAt`, `lastUsedAt` |
+| `POST` | `/api/tokens` | `{name}` → the token, **once**. It is not recoverable after this response; only its hash is stored. |
+| `DELETE` | `/api/tokens/:id` | Revoke it. 204 whether or not `id` existed — the endpoint does not confirm another account's token id. |
+
+## Webhooks
+
+Notified with every transaction a push accepts from any of this account's devices — not from the
+recurring worker or the CSV importer, which fire in bursts a webhook subscriber does not want one
+delivery per row of (`internal/api/webhooks.go`).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/webhooks` | List, including the secret — unlike a token, seeing it again is how the receiving end gets configured |
+| `POST` | `/api/webhooks` | `{name, url}` → the stored webhook. `url` must start with `http://` or `https://`. |
+| `DELETE` | `/api/webhooks/:id` | Remove it |
+
+A delivery is `POST {event: "txn.created", transactions: [...]}` to `url`, with
+`X-Moneyfly-Event: txn.created` and `X-Moneyfly-Signature`: hex `HMAC-SHA256` of the exact request
+body, keyed on the webhook's secret — verify it before trusting a delivery claims to be from this
+instance. Best-effort: no retry queue, and the URL's resolved address is checked against
+private/loopback/link-local ranges on every delivery (not only at creation, which a changed DNS
+record would outdate) — a webhook is a way to make this server issue a request on someone's behalf,
+and on a multi-user instance "someone" is not necessarily the operator.
+
+## Export
+
+`GET /api/export/transactions.csv?profile=native|monefy` streams every live transaction as CSV,
+`Content-Disposition: attachment`. `native` is this app's own shape (`date,kind,account,category,
+amount,currency,note`); `monefy` matches the positional format [MONEFY-PARITY.md §5](MONEFY-PARITY.md)
+documents, so a file this produces reads back through this app's own importer or opens in Monefy
+itself. An unknown `profile` is `400`. See `internal/exporter` for adding a third shape.
+
+## Admin
+
+Root manages the others: every route needs both `authed` and `adminMW` (`internal/api/handlers_admin.go`)
+— a non-admin gets `403`, same as an unauthenticated caller gets `401`. There is no separate
+"owner" concept: the first account ever created is the admin (`db.CreateUser`), and any admin can
+promote another.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/admin/users` | Every account on the instance, oldest first. Never a password hash. |
+| `POST` | `/api/admin/users` | `{email, password, displayName?}` → provisions an account directly, bypassing `registration` entirely — this is the admin acting, not the public signing up. Not signed in by this call: the new person signs in themselves, with the password given here. |
+| `DELETE` | `/api/admin/users/:id` | Removes the account and everything it owns, via the same foreign keys every synced table already carries back to `users` (docs/ARCHITECTURE.md §1) — no separate cleanup step. `400` on your own id: manage your own account from Settings, not here. `409` if it is the last admin. |
+| `PUT` | `/api/admin/users/:id` | `{isAdmin}` → promotes or demotes. Acting on your own id is allowed here (stepping down when someone else already holds it is reasonable) and refused only by the same last-admin rule, `409`. |
+
+```jsonc
+// one entry from GET /api/admin/users
+{ "id": "0199…", "email": "you@example.com", "displayName": "You",
+  "baseCurrency": "EUR", "isAdmin": true, "createdAt": 1785000000 }
+```
 
 ## Not found
 

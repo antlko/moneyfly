@@ -16,9 +16,7 @@ defineEmits<{ expense: []; income: [] }>()
     `--spacing-fab-b` is the clearance below — the home indicator's, not the full
     bottom inset. See the token's note in tailwind.css.
   -->
-  <footer
-    class="flex shrink-0 items-center justify-around px-10 pt-3 pb-fab-b"
-  >
+  <footer class="flex shrink-0 items-center justify-around px-6 pt-3 pb-fab-b">
     <button
       type="button"
       aria-label="New expense"

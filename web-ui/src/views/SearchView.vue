@@ -186,7 +186,7 @@ function clear() {
       />
     </p>
 
-    <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]">
+    <main class="flex-1 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
       <!-- The same row as the dashboard: one design for a transaction, everywhere. -->
       <ul class="divide-y divide-mf-muted/20 px-4">
         <li v-for="row in results" :key="row.id">

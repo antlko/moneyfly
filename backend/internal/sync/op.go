@@ -110,7 +110,7 @@ var specs = map[string]spec{
 	"category":       {required: []string{"name", "kind"}, validate: validateCategory},
 	"txn":            {required: []string{"kind", "occurredOn", "amountMinor", "currency"}, validate: validateTxn},
 	"budget":         {required: []string{"limitMinor", "currency"}, validate: validateBudget},
-	"recurring_rule": {required: []string{"freq", "nextOn"}, validate: validateRecurring},
+	"recurring_rule": {required: []string{"kind", "freq", "nextOn", "amountMinor", "currency"}, validate: validateRecurring},
 	"user_setting":   {required: []string{"value"}},
 }
 
@@ -283,9 +283,22 @@ func validateBudget(f fields) error {
 	return nil
 }
 
+// validateRecurring mirrors validateTxn: a rule is materialised into a
+// transaction verbatim, so it must carry everything a transaction requires,
+// with "nextOn" standing in for "occurredOn" as the date that moves forward
+// each time the worker fires. Transfers do not recur — only expense/income.
 func validateRecurring(f fields) error {
+	if err := f.oneOf("kind", "expense", "income"); err != nil {
+		return err
+	}
 	if err := f.oneOf("freq", "daily", "weekly", "monthly", "yearly"); err != nil {
 		return err
 	}
-	return f.date("nextOn")
+	if err := f.date("nextOn"); err != nil {
+		return err
+	}
+	if _, ok := f.integer("amountMinor"); !ok {
+		return fmt.Errorf("amountMinor must be a whole number of minor units")
+	}
+	return f.currency("currency")
 }

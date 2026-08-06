@@ -34,6 +34,14 @@ func newTestServer(t *testing.T, yaml string) *Server {
 // do issues a request against the Fiber app. cookie may be empty.
 func (s *Server) do(t *testing.T, method, path, body, cookie string) *http.Response {
 	t.Helper()
+	return s.doWithHeader(t, method, path, body, "Cookie", cookie)
+}
+
+// doWithHeader is do with one arbitrary header instead of a cookie — Bearer
+// auth tests need "Authorization", not "Cookie". header is skipped entirely
+// when value is empty, the same as do skips an empty cookie.
+func (s *Server) doWithHeader(t *testing.T, method, path, body, header, value string) *http.Response {
+	t.Helper()
 	var rdr io.Reader
 	if body != "" {
 		rdr = strings.NewReader(body)
@@ -42,8 +50,8 @@ func (s *Server) do(t *testing.T, method, path, body, cookie string) *http.Respo
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
+	if value != "" {
+		req.Header.Set(header, value)
 	}
 	res, err := s.App().Test(req)
 	if err != nil {
