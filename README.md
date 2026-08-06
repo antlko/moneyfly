@@ -13,9 +13,10 @@
 ---
 
 > **Status: usable.** Install it, record spending in three taps, switch periods, run accounts and
-> transfers in several currencies, edit and search — all of it working with no connection, syncing
-> when one returns. Budgets, recurring records and the Monefy CSV import are still to come. See
-> [the roadmap](#roadmap).
+> transfers in several currencies, edit and search, set budgets and recurring records, import a
+> Monefy export, export, integrate or script against your own data, and get a real analytics
+> dashboard on a wider screen — all of it working with no connection, syncing when one returns. A
+> few PWA niceties (dark theme, a PIN lock) are still to come. See [the roadmap](#roadmap).
 
 moneyfly is a personal expense tracker you run yourself. On a phone it works the way Monefy does,
 because that design is hard to beat for the one thing that matters: a spend takes three taps —
@@ -30,8 +31,8 @@ dashboard. Your data lives on your server and in your browser, and nowhere else.
   recording a coffee in a basement café works exactly as well as at home.
 - **Installs like an app.** It is a PWA: Add to Home Screen on iOS or Android and it runs
   full-screen with its own icon. There is no native app to install and none is planned.
-- **Your data stays exportable.** CSV export is configurable down to the column order, with a
-  Monefy-compatible profile so you can leave as easily as you arrived.
+- **Your data stays exportable.** CSV export, in this app's own shape or a Monefy-compatible one, so
+  you can leave as easily as you arrived. API tokens and webhooks are there for anything scripted.
 
 ## Quick start
 
@@ -88,10 +89,10 @@ including how to test sync between two devices, are in [docs/DEVELOPMENT.md](doc
 | 3 | Monefy dashboard and record screens | ✅ |
 | 4 | Accounts, transfers, search, periods | ✅ |
 | 5 | Multi-currency with daily FX rates | ✅ |
-| 6–7 | Budgets, recurring records | |
-| 8 | Monefy CSV import | |
-| 9 | Export profiles, webhooks, API tokens | |
-| 10 | Desktop analytics dashboard | |
+| 6–7 | Budgets, recurring records | ✅ |
+| 8 | Monefy CSV import | ✅ |
+| 9 | Export profiles, webhooks, API tokens | ✅ |
+| 10 | Desktop analytics dashboard | ✅ |
 | 11 | PWA polish, dark theme, PIN lock | ◐ installable & offline |
 
 ## Relationship to Monefy

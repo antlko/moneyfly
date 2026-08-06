@@ -36,6 +36,21 @@ document.addEventListener('visibilitychange', () => {
 })
 
 /*
+ * Make `:active` work at all on iOS.
+ *
+ * Safari applies `:active` to a touched element only if the document has a
+ * touch listener registered somewhere — an old heuristic for "this page expects
+ * to be tapped". Without one, *every* pressed state in the app is dead on an
+ * iPhone: the keypad does not shrink, the record buttons do not dip, the
+ * account and currency rows do nothing. It looks precisely like a tap that was
+ * not received, which is why a tap whose result takes a moment gets repeated.
+ *
+ * An empty passive listener is the whole fix, and passive so it can never delay
+ * a scroll.
+ */
+document.addEventListener('touchstart', () => {}, { passive: true })
+
+/*
  * Put the shell back after the keyboard closes.
  *
  * iOS scrolls the *visual* viewport to reveal a focused field, and on dismissing

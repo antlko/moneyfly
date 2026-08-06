@@ -57,7 +57,7 @@ const money = (minor: unknown) =>
   <div class="flex h-full flex-col bg-mf-bg">
     <ScreenHeader title="Sync" />
 
-    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(6rem+var(--spacing-safe-b))]">
+    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(6rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
       <!--
         What the dashboard's status line leads to. Someone arriving here has just
         been told "Offline" and wants to know whether that costs them anything.

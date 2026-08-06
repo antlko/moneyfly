@@ -122,6 +122,44 @@ const addDays = (day: DayKey, delta: number): DayKey => {
   return fromDate(date)
 }
 
+/** The four cadences a recurring rule may run on. Must match the `freq`
+ * check in backend/internal/sync/op.go's validateRecurring. */
+export type RecurringFreq = 'daily' | 'weekly' | 'monthly' | 'yearly'
+
+/**
+ * The next occurrence of a recurring rule, one period after `day`.
+ *
+ * Monthly and yearly clamp to the last real day of the target month rather
+ * than overflow into the month after — a naive `new Date(y, m + 1, d)`
+ * normalises an out-of-range day forward the same way Go's `time.AddDate`
+ * does, so 31 January would silently become 3 March. This mirrors the clamp
+ * the recurring worker applies server-side
+ * (`addMonthsClamped` in backend/internal/api/recurring.go) purely so the
+ * "make recurring" sheet can preview the date the worker will actually post
+ * next — the worker's own copy is the one that governs what gets written.
+ */
+export function nextOccurrence(day: DayKey, freq: RecurringFreq): DayKey {
+  switch (freq) {
+    case 'daily':
+      return addDays(day, 1)
+    case 'weekly':
+      return addDays(day, 7)
+    case 'monthly':
+      return addCalendarMonthsClamped(day, 1)
+    case 'yearly':
+      return addCalendarMonthsClamped(day, 12)
+  }
+}
+
+function addCalendarMonthsClamped(day: DayKey, months: number): DayKey {
+  const [y, m, d] = day.split('-').map(Number)
+  const firstOfTarget = new Date(y, m - 1 + months, 1)
+  const lastDayOfTarget = new Date(firstOfTarget.getFullYear(), firstOfTarget.getMonth() + 1, 0).getDate()
+  return fromDate(
+    new Date(firstOfTarget.getFullYear(), firstOfTarget.getMonth(), Math.min(d, lastDayOfTarget)),
+  )
+}
+
 /**
  * Monday-based week start.
  *

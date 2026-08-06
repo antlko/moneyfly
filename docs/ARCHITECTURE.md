@@ -54,7 +54,7 @@ errors are the only ones logged — a 404 is traffic, not an incident.
 | --- | --- | --- | --- |
 | retention | hourly | drop expired sessions and abandoned OIDC states; trim `change_log` past `sync.change_log_retention_days` | built |
 | FX refresh | daily at `fx.refresh_at` | walk the provider chain, store the day's rates | built |
-| recurring | hourly | materialise due `recurring_rule` rows, idempotent on `(rule_id, occurred_on)` so a restart cannot double-post | *planned* |
+| recurring | hourly | materialise due `recurring_rule` rows, idempotent on `(rule_id, occurred_on)` so a restart cannot double-post | built |
 
 Trimming the journal costs a long-absent device a full re-bootstrap and never costs anyone data —
 the domain rows are untouched.
@@ -88,6 +88,31 @@ the obvious behaviour is the wrong one.
 
 Unlinking refuses to remove the last way in (`db.ErrLastSignInMethod`): an account with no password
 and no identities is unreachable, and a self-hosted instance has no support desk.
+
+### Root manages the others
+
+The first account is always the admin (`db.CreateUser`), and `/api/admin/*`
+(`internal/api/handlers_admin.go`) is how they run the instance for everyone else on it: list every
+account, provision one directly — bypassing `registration` entirely, since an admin adding someone
+is not the public signing up — promote, demote, or delete. See [API.md](API.md) "Admin" for the
+routes.
+
+**Every action that could leave an instance with zero admins is refused** (`db.ErrLastAdmin`): both
+deleting the last admin and demoting them. The same shape as `ErrLastSignInMethod` above, for the
+same reason — there is no support desk to recover a self-hosted instance from that.
+
+**Self-delete is refused before the request ever reaches that check.** Managing your own account
+from the same screen that manages everyone else's is a different, more consequential action than
+Settings — confusing enough to just not offer, since there is nothing here you cannot already do to
+your own account elsewhere. One consequence worth knowing before touching this code: the
+last-admin-delete path is consequently unreachable through the API by construction. Reaching
+`handleAdminDeleteUser` at all requires the caller to be an admin; if the target is also "the last
+admin," the caller can only be that same account, which the self-delete guard already refused for a
+clearer reason. `DeleteUser`'s own check still exists as a db-layer safety net for any future caller
+without the same guard, and is exercised directly at that layer
+(`TestDeleteUserRefusesTheLastAdmin`) rather than through a route that cannot reach it. Demoting has
+no such guard — stepping down when someone else already holds admin is reasonable — so it is the one
+where the rule is actually reachable over HTTP: the sole admin demoting themselves.
 
 ## 4a. Running with no network
 
@@ -183,6 +208,113 @@ real currency event look identical on screen, and the wrong one corrupts every d
 What a provider must publish to be accepted is derived from the data (`db.UsedCurrencies`), not
 hardcoded: adding a forint account is what makes this instance start insisting on a forint rate.
 
+## 4c. Recurring records
+
+A `recurring_rule` row carries the same fields a transaction does (kind, amount, currency, category,
+account) plus `freq` and `nextOn` in place of `occurredOn`. The worker (`internal/api/recurring.go`)
+finds every rule whose `nextOn` is due, across every user, and turns each one into an ordinary `txn`
+row through `DB.ApplyOps` — the same entry point `POST /api/sync/push` uses. A materialised
+transaction is therefore indistinguishable from one a person typed in; it reaches every device the
+same way, over the same op-log.
+
+**A rule behind by several periods catches up fully, one transaction per missed occurrence, rather
+than skipping to today.** The worker is not scheduled tightly — an hourly tick, no wall-clock
+anchor — so this is the normal path after any outage, not an edge case: those were real days of
+spending and the ledger says so.
+
+**Idempotence is the transaction's `naturalKey` (`recurring:<ruleId>:<occurredOn>`), checked before
+every insert — the same structural de-duplication `idx_txn_natural_key` exists for (docs/SYNC.md),
+not a constraint.** This is what makes a crash between "the transaction was created" and "`next_on`
+was advanced" safe to retry: the next tick rebuilds the same candidate set, finds the natural keys
+already present, and only advances the rule. A deleted materialised transaction is not recreated
+either — the key is checked regardless of the tombstone, because a person removing one is intent, not
+an accident to correct.
+
+**Server-authored ops use `deviceId = "server"`**, a constant with no corresponding row in `devices` —
+it exists purely to participate in the Lamport tiebreak like any device id would. In practice it never
+needs to: a materialised transaction starts at lamport 1 and a rule's advance is `stored lamport + 1`,
+so a person's own edit — at their device's already-higher clock — wins outright on lamport alone, the
+ordinary case last-write-wins is built around.
+
+**Monthly and yearly clamp to the last real day of the target month rather than overflow into the
+month after.** `time.AddDate` in Go (and a hand-rolled equivalent in `lib/period.ts`, for the "make
+recurring" sheet's preview only — the worker's own copy is what actually governs what gets posted)
+normalises an out-of-range day forward: 31 January plus one month is 3 March, not 28 February. A rule
+for "the 31st of every month" silently drifting to "the 3rd" a few months later is the kind of bug
+that is only ever noticed once the totals stop matching a bank statement.
+
+## 4d. Integrations: tokens and webhooks
+
+`api_token` and `webhook` (migration `00004_integrations.sql`) are the other tables in the
+"integrations and their secrets" row of §1 — neither is synced, for the same reason `fx_rate` is
+not: a token or a webhook secret is not a domain row replicated to every device, it is a fact about
+how *this account* is reached from outside, held once, in SQLite.
+
+**A webhook's URL is checked against private, loopback and link-local address ranges on every
+delivery, not only when it is created.** The check runs inside the HTTP client's own dial function
+(`internal/api/webhooks.go`), against the address DNS actually resolved to for *this* request — a
+webhook URL is entered by whoever is signed in, which on a multi-user instance is not necessarily
+the operator, and the server is what makes the outbound request. Checking a hostname once, at
+creation, is exactly what a DNS-rebinding attack defeats: resolve to a public address during
+validation, a private one once it is trusted. Checked at dial time, on the resolved address, closes
+that gap.
+
+**Only the ordinary push path fires webhooks — not the recurring worker, not the CSV importer.**
+Both of those write in bursts (a year of missed occurrences catching up at once; a few thousand
+imported rows), and a webhook subscriber almost certainly wants "a person just recorded something,"
+not one HTTP delivery per row of a bulk operation. If a use case for the other two shows up, the
+payload shape (`buildWebhookPayload`) does not need to change — only where it is called from.
+
+**Delivery uses `ApplyResult.Applied`, never the request's own op list.** An op that loses its
+last-write-wins comparison is still a perfectly well-formed op; filtering the input down to
+"whatever was not in `rejected`" would still report a transaction that never actually landed.
+`Applied` is the subset that genuinely won and was written — see the field's own doc in
+`internal/db/sync.go`.
+
+## 4e. The desktop shell
+
+One reactive switch, `useIsDesktop()` (`web-ui/src/lib/breakpoint.ts`, `min-width: 640px`, mirrored
+in a `tailwind.css` media query so the CSS and the JS agree on the same number without importing
+from each other), read in exactly two places:
+
+- **`App.vue`** wraps every route in `DesktopShell.vue` — a persistent sidebar (nav, the two record
+  shortcuts, sync status) — once, at the top, rather than each screen growing its own copy. Signed-out
+  routes (`meta.public`: sign-in, the 404) are excluded even at desktop width: the sidebar links to
+  screens nobody can reach yet and would show an account that does not exist.
+- **`DashboardView.vue`** separately swaps its own body for `DesktopDashboardContent.vue`. This is
+  the *only* screen genuinely redesigned for the width — a period selector, summary cards, a category
+  breakdown, account balances, a recent-records table — because it is the only one whose mobile layout
+  (donut chart, swipe-paged carousel) does not already work at any width.
+
+Every other route (Accounts, Budgets, the record screen, …) still renders its **existing** component
+— same template, same logic — inside `DesktopShell`'s content area, deliberately never a second
+version built for the width. Building one would be a second place for every future field to be
+added. Two small, shared adjustments carry the rest of the way, both keyed off the same
+`useIsDesktop()`:
+
+- **`ScreenHeader.vue`** — the title bar roughly ten screens already shared — drops the green
+  background and the back chevron at desktop width instead of every screen growing its own
+  variant. No chevron because `DesktopShell`'s sidebar is always visible there; "back" has no
+  meaning a highlighted nav link does not already give, unlike on the phone where a screen can be
+  the only way in. Each screen's own header-action buttons (a `+`, a refresh icon) are left
+  unstyled for colour on purpose, so the same markup reads white on the green mobile bar and
+  `mf-ink` on the plain desktop one with no second version of the button either.
+- **A `sm:max-w-2xl` (or `sm:max-w-md` for the narrower record/transfer screens) on each screen's
+  own content wrapper** keeps a short list or form from stretching edge-to-edge across a wide
+  content pane. This is the one per-screen touch — a single class on the existing root element, not
+  a restructure — because the *right* width differs by content (a table wants more room than a
+  settings form), so one blanket rule on `DesktopShell` itself would be wrong for some screen either
+  way.
+
+Both switches read data from the stores the mobile screens already use — `dashboard.ts`,
+`accounts.ts`, `taxonomy.ts` — never a separate desktop computation. A total that disagreed between
+the phone and the desktop dashboard would be far worse than the desktop one looking plain.
+
+**`#app` needs an explicit `height: 100vh` at this width, not `min-height`** — see the entry in
+CLAUDE.md's "Conventions that bite" before touching this rule; the short version is that a
+percentage `height` (`h-full`, which every reused mobile screen's root still has) does not resolve
+against a `min-height`-only ancestor, only a definite one.
+
 ## 5. Where to make a change
 
 | Change | Go here |
@@ -190,11 +322,14 @@ hardcoded: adding a forint account is what makes this instance start insisting o
 | A new API endpoint | `internal/api/handlers_*.go`, register it in `Server.routes` |
 | A new persisted field | a new goose migration + the entity's file in `internal/db` + the sync payload + the Dexie schema |
 | Anything about conflict handling | `internal/sync` and `web-ui/src/sync` — **and [SYNC.md](SYNC.md) in the same change** |
-| A screen's layout | `web-ui/src/components/monefy/*` — and check it against [MONEFY-PARITY.md](MONEFY-PARITY.md) |
+| A screen's layout | `web-ui/src/components/monefy/*` — and check it against [MONEFY-PARITY.md](MONEFY-PARITY.md). This is the mobile layout only; the desktop dashboard has no reference screenshot to match against, since it is not a Monefy likeness at all. |
+| The desktop dashboard's own content | `web-ui/src/components/desktop/DesktopDashboardContent.vue` — reads the same stores the mobile dashboard does (`dashboard.ts`, `accounts.ts`, `taxonomy.ts`); it is a second view of the same computed data, never a second calculation of it |
+| The desktop sidebar or nav | `web-ui/src/components/desktop/DesktopShell.vue`, mounted once in `App.vue` around every route |
 | A colour | `web-ui/src/assets/tailwind.css` `@theme` block, nowhere else |
 | Anything about currency conversion | `internal/fx` and `web-ui/src/lib/fx.ts` — **both, with their mirrored test tables** |
 | An overlay's animation | the named transitions in `web-ui/src/assets/tailwind.css`, applied by wrapping the `v-if` at the call site |
-| A new export destination | one `internal/exporter/target_*.go` that self-registers in `init()` |
+| A new export column shape | one `internal/exporter/profile_*.go` implementing `Profile`, self-registered in `init()` — `Get`/`IDs` resolve it by a string id, same shape as the FX provider chain |
+| Monefy CSV parsing or category/account matching | `internal/importer` — pure and DB-agnostic, see its tests before `internal/api/handlers_import.go`'s |
 | A config field | `internal/config/config.go` (struct + `normalize` + `Validate`), `config.example.yaml`, [CONFIGURATION.md](CONFIGURATION.md) |
 
 ## 6. Deliberate non-goals

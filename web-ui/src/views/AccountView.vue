@@ -75,7 +75,7 @@ const when = (unix: number) => (unix ? new Date(unix * 1000).toLocaleString() : 
   <div class="flex h-full flex-col bg-mf-bg">
     <ScreenHeader title="Account" />
 
-    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))]">
+    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
       <p v-if="message" class="rounded-lg bg-mf-green-soft/40 p-3 text-sm text-mf-green-dark">
         {{ message }}
       </p>

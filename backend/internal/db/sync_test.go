@@ -423,7 +423,7 @@ func TestAllEntitiesRoundTrip(t *testing.T) {
 		{Entity: "category", ID: "c1", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"name":"Food","kind":"expense"}`)},
 		txnOp("t1", 1, "d", "x"),
 		{Entity: "budget", ID: "b1", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"limitMinor":50000,"currency":"EUR"}`)},
-		{Entity: "recurring_rule", ID: "r1", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"freq":"monthly","nextOn":"2026-09-01"}`)},
+		{Entity: "recurring_rule", ID: "r1", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"kind":"expense","freq":"monthly","nextOn":"2026-09-01","amountMinor":-1200,"currency":"EUR"}`)},
 		{Entity: "user_setting", ID: "view.mode", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"value":"donut"}`)},
 	}
 	res, err := d.ApplyOps(u.ID, ops)

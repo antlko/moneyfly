@@ -2,8 +2,13 @@
 import { ChevronLeft } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 
+import { useIsDesktop } from '@/lib/breakpoint'
+
 /**
- * The green bar every screen that is not the dashboard wears.
+ * The green bar every mobile screen that is not the dashboard wears — and,
+ * at the desktop breakpoint, a plain title bar instead. Every screen that
+ * uses this component gets both for free: there is deliberately no second
+ * header component for secondary screens to opt into.
  *
  * It exists because four screens had each grown their own version: a bare
  * `<RouterLink>` reading "‹ Back", with the chevron borrowed from the body font
@@ -26,6 +31,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const isDesktop = useIsDesktop()
 
 function back() {
   if (props.onBack) {
@@ -38,7 +44,20 @@ function back() {
 </script>
 
 <template>
-  <header class="shrink-0 bg-mf-green pt-safe-t text-white">
+  <!--
+    No back chevron on desktop: DesktopShell's sidebar is always visible, so
+    "back" has no meaning a highlighted nav link doesn't already give —
+    unlike on the phone, this screen was never the only way in. Action-slot
+    content (each view's own buttons) is unstyled for colour on purpose, so
+    it inherits white here and mf-ink in the desktop bar without needing two
+    versions of every button.
+  -->
+  <header v-if="isDesktop" class="mb-6 flex items-center gap-2">
+    <h1 class="min-w-0 flex-1 truncate text-2xl font-semibold text-mf-ink">{{ title }}</h1>
+    <slot name="actions" />
+  </header>
+
+  <header v-else class="shrink-0 bg-mf-green pt-safe-t text-white">
     <div class="flex h-14 items-center gap-1 px-1">
       <button
         type="button"

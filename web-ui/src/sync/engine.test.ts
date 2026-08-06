@@ -213,6 +213,36 @@ describe('SyncEngine', () => {
     expect(b.pending.value).toBe(0)
   })
 
+  /**
+   * `occurredOn` is an ordinary field, not a gate on whether a write is sent.
+   *
+   * Nothing in the outbox, the push batch, or the server's `Validate` (which
+   * checks `YYYY-MM-DD` shape only — `backend/internal/sync/op.go`) looks at how
+   * far in the past a date is. This pins that down for both ways a date reaches
+   * a record: entered when it is created, and changed on an edit — the two
+   * things worth checking after a bug where the date picker's own commit event
+   * was silently dropped and nobody could reach either path from the UI.
+   */
+  it('syncs a record dated years in the past, on create and on a later edit', async () => {
+    const a = newDevice(server, 'dev-a')
+    const b = newDevice(server, 'dev-b')
+    await a.start('user-1')
+    await b.start('user-1')
+
+    const id = await a.write('txn', { ...expense('old receipt'), occurredOn: '2019-03-14' })
+    await settle(a, b)
+
+    const [seenByB] = await live(b)
+    expect(seenByB.occurredOn).toBe('2019-03-14')
+
+    // Pushed to an even older date, from the other device, as an edit.
+    await b.write('txn', { ...expense('old receipt'), occurredOn: '2015-01-01' }, id)
+    await settle(a, b)
+
+    const [seenByA] = await live(a)
+    expect(seenByA.occurredOn).toBe('2015-01-01')
+  })
+
   // The conflict case: one row, two edits, no connection. Both sides must end up
   // showing the same winner — disagreeing silently is the failure this whole
   // design exists to prevent.

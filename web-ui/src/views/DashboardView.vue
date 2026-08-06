@@ -13,6 +13,8 @@ import FilterDrawer from '@/components/monefy/FilterDrawer.vue'
 import MenuDrawer from '@/components/monefy/MenuDrawer.vue'
 import RecordsSheet from '@/components/monefy/RecordsSheet.vue'
 import SwipePager from '@/components/monefy/SwipePager.vue'
+import DesktopDashboardContent from '@/components/desktop/DesktopDashboardContent.vue'
+import { useIsDesktop } from '@/lib/breakpoint'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'
 import { SETTING, useSettingsStore } from '@/stores/settings'
@@ -26,6 +28,15 @@ const fx = useFxStore()
 const settings = useSettingsStore()
 const syncStore = useSyncStore()
 const router = useRouter()
+/**
+ * The home route is the one place "the shell component picks the mobile
+ * Monefy frame or the desktop dashboard" (CLAUDE.md) actually happens: every
+ * other route reuses its existing component unmodified inside DesktopShell,
+ * because only the dashboard's own layout — donut, carousel, swipe paging —
+ * is genuinely mobile-shaped. Everything below is read from the same stores
+ * either way; this only decides which template renders them.
+ */
+const isDesktop = useIsDesktop()
 
 const showRecords = ref(false)
 const showFilter = ref(false)
@@ -76,7 +87,9 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
 </script>
 
 <template>
-  <div class="flex h-full flex-col overflow-hidden bg-mf-bg">
+  <DesktopDashboardContent v-if="isDesktop" />
+
+  <div v-else class="flex h-full flex-col overflow-hidden bg-mf-bg">
     <MonefyHeader
       :subtitle="dashboard.accountLabel"
       @filter="showFilter = true"

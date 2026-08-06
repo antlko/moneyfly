@@ -28,6 +28,25 @@ type IdentityDTO struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
+// AdminUserDTO is one account as the admin users screen sees it — never a
+// password hash, and no identities or device list: this is a roster, not the
+// detail either of those would need.
+type AdminUserDTO struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"displayName"`
+	BaseCurrency string `json:"baseCurrency"`
+	IsAdmin      bool   `json:"isAdmin"`
+	CreatedAt    int64  `json:"createdAt"`
+}
+
+func toAdminUserDTO(u *db.User) AdminUserDTO {
+	return AdminUserDTO{
+		ID: u.ID, Email: u.Email, DisplayName: u.DisplayName,
+		BaseCurrency: u.BaseCurrency, IsAdmin: u.IsAdmin, CreatedAt: u.CreatedAt,
+	}
+}
+
 // DeviceDTO is one browser that syncs.
 type DeviceDTO struct {
 	ID         string `json:"id"`

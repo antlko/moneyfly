@@ -3,27 +3,48 @@ import {
   Banknote,
   BookOpen,
   CircleDollarSign,
+  FileUp,
   NotebookTabs,
+  PiggyBank,
+  Plug,
   RefreshCw,
+  Repeat,
   Settings,
+  Users,
 } from '@lucide/vue'
 import type { Component } from 'vue'
+import { computed } from 'vue'
 
+import { useAuthStore } from '@/stores/auth'
 import AppDrawer from './AppDrawer.vue'
 
 const emit = defineEmits<{ close: []; go: [string] }>()
+const auth = useAuthStore()
 
 /** The reference's right-hand drawer: a large icon over each label, one per row. */
-const ITEMS: { to: string; label: string; icon: Component; ready: boolean }[] = [
+const BASE_ITEMS: { to: string; label: string; icon: Component; ready: boolean }[] = [
   { to: '/categories', label: 'Categories', icon: NotebookTabs, ready: false },
   { to: '/accounts', label: 'Accounts', icon: Banknote, ready: true },
+  { to: '/budgets', label: 'Budgets', icon: PiggyBank, ready: true },
+  { to: '/recurring', label: 'Recurring', icon: Repeat, ready: true },
   { to: '/currencies', label: 'Currencies', icon: CircleDollarSign, ready: true },
+  { to: '/import', label: 'Import', icon: FileUp, ready: true },
+  { to: '/integrations', label: 'Integrations', icon: Plug, ready: true },
   { to: '/sync', label: 'Sync', icon: RefreshCw, ready: true },
   { to: '/account', label: 'Settings', icon: Settings, ready: true },
   { to: '/guides', label: 'Guides', icon: BookOpen, ready: false },
 ]
 
-function go(item: (typeof ITEMS)[number]) {
+// Only an admin sees a way in — the route itself would bounce anyone else
+// straight back to the dashboard, so offering the link to everyone would
+// just be a dead end dressed as a feature.
+const ITEMS = computed(() =>
+  auth.user?.isAdmin
+    ? [...BASE_ITEMS, { to: '/admin/users', label: 'Users', icon: Users, ready: true }]
+    : BASE_ITEMS,
+)
+
+function go(item: (typeof BASE_ITEMS)[number]) {
   if (!item.ready) return
   emit('go', item.to)
   emit('close')

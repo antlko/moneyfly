@@ -12,7 +12,15 @@ import (
 
 // ApplyResult reports what a push did.
 type ApplyResult struct {
-	Accepted  int
+	Accepted int
+	// Applied is the subset of the input ops that actually won their
+	// last-write-wins comparison and were written — as opposed to Accepted,
+	// which only counts them. A caller that needs to know *which* rows
+	// changed (a webhook notification, say) uses this instead of the input
+	// ops verbatim: an op that lost a conflict is still perfectly
+	// well-formed, so filtering only Rejected out of the input would still
+	// report something that never actually happened.
+	Applied   []syncproto.Op
 	Rejected  []syncproto.Rejection
 	ServerSeq int64
 	Lamport   int64
@@ -81,6 +89,7 @@ func (d *DB) ApplyOps(userID string, ops []syncproto.Op) (ApplyResult, error) {
 			return res, err
 		}
 		res.Accepted++
+		res.Applied = append(res.Applied, op)
 	}
 
 	// The high-water mark only ever rises, so a device that has been offline

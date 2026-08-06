@@ -56,7 +56,9 @@ const emit = defineEmits<{ prev: []; next: [] }>()
  * See `onLostCapture`: getting that wrong is invisible with a mouse and breaks
  * the gesture entirely on a phone.
  */
-const SLIDE_MS = 190
+const SLIDE_MS = 160
+/** How long the new period takes to come up, in place. */
+const FADE_MS = 130
 /** Fraction of the width that commits the gesture. */
 const COMMIT_RATIO = 0.22
 /** …but never more than this, so a wide desktop window is not a workout. */
@@ -64,6 +66,7 @@ const COMMIT_MAX_PX = 110
 
 const root = ref<HTMLElement | null>(null)
 const offset = ref(0)
+const opacity = ref(1)
 const transition = ref('')
 const busy = ref(false)
 
@@ -219,35 +222,47 @@ function onLostCapture(e: PointerEvent) {
 }
 
 /**
- * Slide the current content out, swap it, slide the new content in.
+ * Carry the old period out, then bring the new one up **where it belongs**.
  *
- * The ordering here is the whole trick, and getting it wrong produces a very
- * specific glitch: the new period appears to fly in from the side it just left.
+ * The outgoing content leaves in the direction the finger was going. The
+ * incoming content does *not* slide in after it: it appears at rest and fades.
  *
- * Vue applies reactive changes asynchronously, so setting the offset to the
- * incoming side and then immediately animating to zero collapses into a single
- * flush — the browser never sees the jump, only a transition from wherever the
- * element already was. The content change and the reposition therefore have to
- * be flushed together (`nextTick`), and a layout read forced afterwards, before
- * the slide-in is allowed to start.
+ * That asymmetry is deliberate, and it is a bug fix rather than a taste. A
+ * sliding arrival looks better for the fifth of a second it lasts and costs the
+ * tap that comes next — for the whole of that animation every category icon is
+ * somewhere other than where it appears to be by the time a finger reaches it,
+ * because the browser hit-tests where the element *is*, not where the frame you
+ * reacted to had drawn it. Aim at "Groceries" the instant the new month shows
+ * and the tap lands on empty background; press again half a second later and it
+ * works. That is the "every button needs two taps after a swipe" report, and it
+ * is exactly as reproducible as the animation is long.
+ *
+ * Fading it in at its final position keeps the sense of movement and gives the
+ * new screen a hit target from the first frame it is visible.
  */
 async function commit(direction: 1 | -1) {
   busy.value = true
   try {
     await animateTo(direction === 1 ? -width : width)
 
-    // Swap the content and park it on the incoming side in the same flush.
+    // Swap the content and put it straight back at rest, invisible, in one
+    // flush — no travel for a finger to miss.
     transition.value = ''
-    offset.value = direction === 1 ? width : -width
+    offset.value = 0
+    opacity.value = 0
     if (direction === 1) emit('next')
     else emit('prev')
     await nextTick()
 
-    // Force layout so the next change is a transition, not part of that flush.
+    // Force layout so the fade is a transition, not part of that flush.
     void root.value?.offsetHeight
 
-    await animateTo(0)
+    transition.value = `opacity ${FADE_MS}ms var(--mf-ease)`
+    opacity.value = 1
+    await wait(FADE_MS)
   } finally {
+    transition.value = ''
+    opacity.value = 1
     busy.value = false
   }
 }
@@ -256,15 +271,23 @@ async function commit(direction: 1 | -1) {
 let timer: ReturnType<typeof setTimeout> | undefined
 onScopeDispose(() => clearTimeout(timer))
 
+/**
+ * Resolve after `ms`, plus a little.
+ *
+ * The margin matters: clearing a transition the moment its duration is up cuts
+ * the last frame and shows as a jump at the end.
+ */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    clearTimeout(timer)
+    timer = setTimeout(resolve, ms + 20)
+  })
+}
+
 function animateTo(target: number): Promise<void> {
   transition.value = `transform ${SLIDE_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1)`
   offset.value = target
-  return new Promise((resolve) => {
-    // A little longer than the transition: clearing it early would cut the
-    // animation short and show as a jump at the end.
-    clearTimeout(timer)
-    timer = setTimeout(resolve, SLIDE_MS + 20)
-  })
+  return wait(SLIDE_MS)
 }
 </script>
 
@@ -281,7 +304,7 @@ function animateTo(target: number): Promise<void> {
   >
     <div
       class="flex h-full flex-col"
-      :style="{ transform: `translate3d(${offset}px, 0, 0)`, transition }"
+      :style="{ transform: `translate3d(${offset}px, 0, 0)`, opacity, transition }"
     >
       <slot />
     </div>
