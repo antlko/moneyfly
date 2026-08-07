@@ -1,16 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="moneyfly">
   <!--
     Maskable variant: Android crops this to an arbitrary shape (circle, squircle,
-    teardrop) and only the centre 80% is guaranteed visible, so the mark is
-    scaled to ~62% and the background is full-bleed with no rounding of its own.
+    teardrop) and only the centre 80% (radius 205 from centre) is guaranteed
+    visible. The donut is already centred on the canvas and its outer edge
+    (ring radius 150 + half the 64 stroke = 182) sits inside that safe radius
+    with margin, so — unlike the old off-centre mark — this needs no
+    recentring or extra scale-down, just the full-bleed background.
   -->
   <rect width="512" height="512" fill="#7ec89f" />
-  <!-- The mark's visual centre is ~(300,260), not (256,256) — recentre on it. -->
-  <g transform="translate(256 256) scale(0.62) translate(-300 -260)">
-    <circle cx="238" cy="312" r="124" fill="none" stroke="#ffffff" stroke-width="56" />
-    <path
-      d="M338 150c46-50 104-74 148-66-12 50-52 92-104 108-24 8-44 10-58 8z"
-      fill="#ffffff"
-    />
+  <g transform="rotate(-90 256 256)">
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#ffffff" stroke-width="64"
+      stroke-dasharray="395.8 546.7" stroke-dashoffset="0" />
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#a9dcc0" stroke-width="64"
+      stroke-dasharray="263.9 678.6" stroke-dashoffset="-416.8" />
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#4f9c76" stroke-width="64"
+      stroke-dasharray="219.9 722.6" stroke-dashoffset="-701.6" />
   </g>
 </svg>

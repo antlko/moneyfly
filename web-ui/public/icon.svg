@@ -1,19 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="moneyfly">
   <!--
-    The mark is the app's own main screen: the spending donut, with a wing.
-    Deliberately not derived from Monefy's artwork.
+    The mark is the app's own main screen: a segmented spending donut, in the
+    three brand greens plus white. Deliberately not derived from Monefy's
+    artwork — this is a generic multi-category ring, not its drawn icon set.
   -->
   <rect width="512" height="512" rx="112" fill="#7ec89f" />
-  <circle
-    cx="238"
-    cy="312"
-    r="124"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="56"
-  />
-  <path
-    d="M338 150c46-50 104-74 148-66-12 50-52 92-104 108-24 8-44 10-58 8z"
-    fill="#ffffff"
-  />
+  <g transform="rotate(-90 256 256)">
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#ffffff" stroke-width="64"
+      stroke-dasharray="395.8 546.7" stroke-dashoffset="0" />
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#a9dcc0" stroke-width="64"
+      stroke-dasharray="263.9 678.6" stroke-dashoffset="-416.8" />
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#4f9c76" stroke-width="64"
+      stroke-dasharray="219.9 722.6" stroke-dashoffset="-701.6" />
+  </g>
 </svg>

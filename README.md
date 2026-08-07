@@ -13,12 +13,15 @@
 </p>
 
 <p align="center">
-  <img width="49%" src="docs/screenshots/mobile-dashboard.png" alt="Monefy-style donut dashboard on mobile">
-  <img width="49%" src="docs/screenshots/mobile-record.png" alt="Three-tap record flow: amount then category">
+  <img src="docs/screenshots/mobile-dashboard.png" width="190" alt="Monefy-style donut dashboard on mobile">
+  <img src="docs/screenshots/mobile-record.png" width="190" alt="Three-tap record flow: amount then category">
 </p>
+<p align="center"><sub>Mobile dashboard &nbsp;&nbsp;·&nbsp;&nbsp; Best easy record flow</sub></p>
+
 <p align="center">
-  <img width="99%" src="docs/screenshots/desktop-dashboard.png" alt="Analytics dashboard on desktop">
+  <img src="docs/screenshots/desktop-dashboard.png" width="760" alt="Analytics dashboard on desktop">
 </p>
+<p align="center"><sub>Desktop analytics dashboard</sub></p>
 
 ---
 
@@ -98,9 +101,96 @@ docker compose up -d --build   # uncomment the `build:` stanza in docker-compose
 Open <http://localhost:5007> — **the first account you create claims the instance and becomes the
 admin.**
 
-> **Installing on a phone needs HTTPS.** Service workers only register over HTTPS or on
-> `localhost`, so `http://192.168.x.x` will not offer "Add to Home Screen". Put the instance behind
-> Caddy, Tailscale Serve, or any reverse proxy with a certificate.
+## Install it as an app
+
+moneyfly is a PWA: once your instance is running, install it like a native app on your phone —
+your own icon, full-screen, no browser chrome. Every action you take from then on — recording a
+spend, editing a category, setting a budget — is written to your device instantly and queued to
+sync with your server in the background, online or off. It reaches every other device signed into
+the same account the same way. See **[How sync works](#how-sync-works)** below for exactly what
+that means and what does or doesn't sync.
+
+**Android (Chrome)**
+
+1. Open your instance's URL in Chrome and sign in.
+2. Tap the **⋮** menu → **Install app** (or tap the install icon Chrome shows in the address bar).
+3. Confirm. moneyfly appears on your home screen and in the app drawer.
+
+**iOS (Safari)**
+
+1. Open your instance's URL in **Safari** — installation only works from Safari; every other iOS
+   browser sits on the same engine but doesn't expose the install action.
+2. Sign in.
+3. Tap the **Share** icon → **Add to Home Screen** → **Add**.
+
+**Self-hosting: HTTPS is required to install.** Service workers — what makes the app installable
+and usable offline — only register over HTTPS or on `localhost`, so `http://192.168.x.x` will
+never offer "Add to Home Screen" on either platform. Put your instance behind a reverse proxy that
+terminates TLS — [Caddy](https://caddyserver.com), [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve),
+or anything else — in front of `:5007`.
+
+## How sync works
+
+Every device — phone, laptop, a second phone — keeps a **full local replica** of your accounts,
+categories, transactions, budgets and recurring rules in its own IndexedDB. The UI always reads
+from that replica, never from the network, which is what makes recording a spend with no signal
+work exactly like recording one at home:
+
+```mermaid
+flowchart LR
+    subgraph phone["📱 Your phone"]
+        A[Record a €4.50 coffee] -->|instant, no network wait| B[(IndexedDB — full replica)]
+        B --> C[Push queue]
+    end
+
+    subgraph server["Your server"]
+        D[POST /api/sync/push] --> E[(SQLite + change_log)]
+        E --> F[SSE: /api/sync/events]
+        E --> G[GET /api/sync/pull since=N]
+    end
+
+    subgraph laptop["💻 Your laptop"]
+        H[Wakes up, pulls deltas] --> I[(IndexedDB — full replica)]
+        I --> J[Dashboard updates]
+    end
+
+    C -->|POST, once online| D
+    F -.->|wake| H
+    G -->|deltas| H
+```
+
+Full protocol — the exact wire format, retry rules, bootstrap and every conflict scenario — is
+documented in **[docs/SYNC.md](docs/SYNC.md)**. The short version:
+
+- **What syncs.** Five kinds of row travel through this op-log: `account`, `category`, `txn`
+  (expenses, income and transfers), `budget` and `recurring_rule`. Each carries a Lamport counter,
+  the id of the device that last wrote it, and a `deleted` tombstone flag — rows are never hard
+  `DELETE`d, because a hard delete can't propagate to a device that hasn't seen it yet.
+- **How a conflict resolves.** Every row's version is the pair `(lamport, device_id)`. The higher
+  lamport wins outright; on a tie, the lexicographically greater `device_id` wins. That rule runs
+  identically on the client and the server, so applying the same op twice is always a no-op and the
+  outcome never depends on which device's push happens to land first — any interleaving of the same
+  edits converges to the same state. It's last-write-wins **per row, not per field**, which is safe
+  here specifically because an account's balance is never stored: it's derived by summing that
+  account's transactions on every read, so there is no running counter an overwritten edit could
+  desync.
+- **Bootstrapping a new device.** It never starts from "everything since the beginning" —
+  the server's `change_log` is trimmed by `sync.change_log_retention_days`, so that would silently
+  return an incomplete history. Instead a new device calls `GET /api/sync/snapshot` once for every
+  current row plus a cursor, then follows only the deltas after that. A device that's been offline
+  longer than retention gets a `409 resync required` on its next pull and re-bootstraps the same
+  way.
+- **What does *not* sync.** Three tables sit deliberately outside the op-log, because none of them
+  is a domain row that belongs on every device:
+  - **Exchange rates** (`fx_rate`) — a fact about the world, not about a user. The server fetches
+    them from providers once a day; every client pulls the same table read-only over plain REST
+    into its own cache, never through the sync engine.
+  - **Integrations** (`api_token`, `webhook`) — a token or a webhook secret describes how *this
+    account* is reached from outside. It's held once, in the server's SQLite, and never replicated
+    to a device.
+  - **`config.yaml`** — instance infrastructure: listen address, OIDC providers, the FX provider
+    chain. It's a file a human edits on the server; there's deliberately no API endpoint that even
+    reads it back, let alone syncs it.
 
 ## Configuration
 
@@ -136,8 +226,8 @@ runs the mobile flow and the desktop dashboard, no separate build.
   operation-log sync engine with last-write-wins conflict resolution, and structured `slog` logging.
 - **Frontend** — Vue 3 `<script setup>`, Pinia stores, Dexie for the on-device IndexedDB replica,
   Tailwind CSS v4.
-- **Sync** — every device keeps a full local replica and pushes/pulls a change log through the
-  server; the UI never waits on the network. See [docs/SYNC.md](docs/SYNC.md) for the protocol.
+- **Sync** — an operation-log engine with Lamport-clock conflict resolution; see
+  [How sync works](#how-sync-works) above for the full picture.
 
 ## Development
 
