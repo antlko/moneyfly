@@ -4,7 +4,7 @@
 
 <h1 align="center">moneyfly</h1>
 
-<p align="center">Self-hosted expense tracking that syncs across your devices.</p>
+<p align="center">Self-hosted expense tracking that syncs across your devices. One command to setup, PWA for online/offine iOS/Android usage.</p>
 
 <p align="center">
   <a href="https://github.com/antlko/moneyfly/pkgs/container/moneyfly"><img src="https://img.shields.io/badge/ghcr.io-antlko%2Fmoneyfly-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
