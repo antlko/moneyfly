@@ -8,6 +8,16 @@
 
 <p align="center">
   <a href="https://github.com/antlko/moneyfly/pkgs/container/moneyfly"><img src="https://img.shields.io/badge/ghcr.io-antlko%2Fmoneyfly-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
+  <img src="https://img.shields.io/badge/stack-Go%20%2B%20Vue%203-00ADD8?logo=go&logoColor=white" alt="Made with Go + Vue">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">
+  <img width="49%" src="docs/screenshots/mobile-dashboard.png" alt="Monefy-style donut dashboard on mobile">
+  <img width="49%" src="docs/screenshots/mobile-record.png" alt="Three-tap record flow: amount then category">
+</p>
+<p align="center">
+  <img width="99%" src="docs/screenshots/desktop-dashboard.png" alt="Analytics dashboard on desktop">
 </p>
 
 ---
@@ -18,10 +28,11 @@
 > dashboard on a wider screen — all of it working with no connection, syncing when one returns. A
 > few PWA niceties (dark theme, a PIN lock) are still to come. See [the roadmap](#roadmap).
 
-moneyfly is a personal expense tracker you run yourself. On a phone it works the way Monefy does,
-because that design is hard to beat for the one thing that matters: a spend takes three taps —
-tap `−`, type the amount, pick the category. On a wide screen the same app becomes an analytics
-dashboard. Your data lives on your server and in your browser, and nowhere else.
+moneyfly is a personal expense tracker you run yourself. One container, one data directory, no
+account with anyone else. On a phone it works the way Monefy does, because that design is hard to
+beat for the one thing that matters: a spend takes three taps — tap `−`, type the amount, pick the
+category. On a wide screen the same app becomes an analytics dashboard. Your data lives on your
+server and in your browser, and nowhere else.
 
 ## Why
 
@@ -36,35 +47,97 @@ dashboard. Your data lives on your server and in your browser, and nowhere else.
 
 ## Quick start
 
-Pull the published image:
+moneyfly ships as a **single container** — pick whichever route is easiest, each block is
+copy-paste ready.
+
+### Option A — `docker run`
 
 ```bash
 docker run -d --name moneyfly -p 5007:5007 -v moneyfly-config:/config ghcr.io/antlko/moneyfly:latest
 ```
 
-Or use Compose — [`docker-compose.yml`](docker-compose.yml) is ready to copy, and pastes straight
-into Portainer → Stacks → Add stack:
+### Option B — Docker Compose
 
-```bash
-docker compose up -d
+Save this as `docker-compose.yml` (or copy [the one in this repo](docker-compose.yml)) and run
+`docker compose up -d`:
+
+```yaml
+services:
+  moneyfly:
+    image: ghcr.io/antlko/moneyfly:latest
+    container_name: moneyfly
+    restart: unless-stopped
+    ports:
+      - '5007:5007'
+    volumes:
+      - moneyfly-config:/config
+
+volumes:
+  moneyfly-config:
 ```
 
-To build from source instead, uncomment the `build:` stanza in that file:
+### Option C — Portainer (stack)
+
+1. **Stacks → Add stack**, give it a name (e.g. `moneyfly`).
+2. Paste the Compose file from Option B into the **Web editor**.
+3. Click **Deploy the stack**.
+4. Browse to `http://<your-server>:5007` and finish setup.
+
+Nothing to build — the image is pulled from GHCR.
+
+### Option D — Build from source
 
 ```bash
-docker compose up --build
+git clone https://github.com/antlko/moneyfly.git
+cd moneyfly
+docker compose up -d --build   # uncomment the `build:` stanza in docker-compose.yml first
 ```
 
-Then open <http://localhost:5007>. The first account you create claims the instance and becomes the
-admin.
+---
 
-Configuration is optional — a missing `config.yaml` starts with sensible defaults. To customise,
-copy `config/config.example.yaml` to `config/config.yaml` and restart. Every field is documented in
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+Open <http://localhost:5007> — **the first account you create claims the instance and becomes the
+admin.**
 
 > **Installing on a phone needs HTTPS.** Service workers only register over HTTPS or on
 > `localhost`, so `http://192.168.x.x` will not offer "Add to Home Screen". Put the instance behind
 > Caddy, Tailscale Serve, or any reverse proxy with a certificate.
+
+## Configuration
+
+Everything lives in one **config directory**, mounted at `/config` in Docker:
+
+```
+/config
+├── config.yaml     # infrastructure only: listen address, base URL, OIDC, FX, retention
+├── moneyfly.db     # users, sessions, devices, every domain row, sync log — SQLite
+└── exports/        # CSV exports written on request
+```
+
+Configuration is entirely optional — a missing `config.yaml` starts with sensible defaults. To
+customise, copy [`config/config.example.yaml`](config/config.example.yaml) to `config/config.yaml`
+and restart; every field is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MONEYFLY_CONFIG_DIR` | `/config` | Where `config.yaml`, the database and exports live. |
+| `MONEYFLY_ADDR` | `:5007` | Listen address (`host:port`). |
+| `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin. Required once an OIDC provider is configured. |
+| `MONEYFLY_REGISTRATION` | `open` | `open` — anyone who can reach the instance may sign up. `closed` — set this once you've created your account. |
+| `MONEYFLY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+
+Command-line flags mirror the directory and address settings: `--config-dir` and `--addr`.
+
+## How it works
+
+One static Go binary embeds the built Vue app and serves both the API and the UI — the same code
+runs the mobile flow and the desktop dashboard, no separate build.
+
+- **Backend** — Go with [Fiber](https://gofiber.io) v3, SQLite (`config/moneyfly.db`), an
+  operation-log sync engine with last-write-wins conflict resolution, and structured `slog` logging.
+- **Frontend** — Vue 3 `<script setup>`, Pinia stores, Dexie for the on-device IndexedDB replica,
+  Tailwind CSS v4.
+- **Sync** — every device keeps a full local replica and pushes/pulls a change log through the
+  server; the UI never waits on the network. See [docs/SYNC.md](docs/SYNC.md) for the protocol.
 
 ## Development
 
@@ -78,6 +151,17 @@ make dev-ui
 
 Two servers side by side: Go on `:5007`, Vite on `:5173` proxying `/api` to it. Full instructions,
 including how to test sync between two devices, are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Documentation
+
+| Doc | Read it when you need |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data ownership, request flow, background workers |
+| [docs/SYNC.md](docs/SYNC.md) | The op-log protocol, conflict resolution, bootstrap |
+| [docs/MONEFY-PARITY.md](docs/MONEFY-PARITY.md) | The screen spec the mobile UI is measured against |
+| [docs/API.md](docs/API.md) | Every endpoint + object shape |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every `config.yaml` field |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Running both dev servers, building the single binary |
 
 ## Roadmap
 
