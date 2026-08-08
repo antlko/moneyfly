@@ -55,7 +55,9 @@ running the dev servers.
   holds a full replica of that user's domain rows and is what the UI actually reads. Both server
   stores live in the config dir (`/config` in Docker; `MONEYFLY_CONFIG_DIR` / `--config-dir`,
   default `./config`).
-- **Backend packages** (`backend/internal/`): `config` (load-only YAML + env overlay), `logger`
+- **Backend packages** (`backend/internal/`): `config` (YAML + env overlay; writes a fully-defaulted
+  file on first boot, and `UpdateSettings` persists the `app`/`sync`/`fx` subset — never
+  `server`/`oidc`), `logger`
   (slog JSON), `api` (Fiber v3 app, central `ErrorHandler` rendering `{"error": ...}`, SPA
   catch-all over the embedded FS), `web` (`//go:embed all:dist`, exposes `web.FS()`). Entry:
   `cmd/moneyfly/main.go`.

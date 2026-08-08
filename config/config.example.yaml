@@ -1,10 +1,15 @@
 # moneyfly instance configuration.
 #
-# Every value below is optional — a missing config.yaml starts with these
-# defaults. This file holds infrastructure only: accounts, categories and
-# transactions live in moneyfly.db because they sync between devices.
+# Every value below is optional — and on first boot with no config.yaml, the
+# instance writes one containing exactly these defaults, so there is always a
+# real file to edit rather than a set of defaults you have to know about. This
+# file holds infrastructure only: accounts, categories and transactions live in
+# moneyfly.db because they sync between devices.
 #
-# Copy to config.yaml and edit. Restart to apply (config is read at startup).
+# The `app`, `sync` and `fx` sections can also be changed from Settings →
+# Instance in the app (admin only), which applies immediately and writes the
+# change back here — no restart. `server` and `oidc` are edited here or by
+# environment variable only, and are read at startup, so those need a restart.
 
 server:
   addr: ':5007'

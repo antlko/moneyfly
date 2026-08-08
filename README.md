@@ -199,13 +199,16 @@ Everything lives in one **config directory**, mounted at `/config` in Docker:
 ```
 /config
 ├── config.yaml     # infrastructure only: listen address, base URL, OIDC, FX, retention
-├── moneyfly.db     # users, sessions, devices, every domain row, sync log — SQLite
-└── exports/        # CSV exports written on request
+└── moneyfly.db     # users, sessions, devices, every domain row, sync log — SQLite
 ```
 
-Configuration is entirely optional — a missing `config.yaml` starts with sensible defaults. To
-customise, copy [`config/config.example.yaml`](config/config.example.yaml) to `config/config.yaml`
-and restart; every field is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+Configuration is entirely optional: on first boot the instance writes a `config.yaml` containing
+every default, so there is always a real file to edit rather than a set of defaults you have to
+know about — [`config/config.example.yaml`](config/config.example.yaml) is the annotated version of
+the same thing. The `app`, `sync` and `fx` sections can also be changed from **Settings → Instance**
+in the app (admin only), which applies immediately and writes the change back to the file; `server`
+and `oidc` are file-or-environment only and need a restart. Every field is documented in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 | Variable | Default | Description |
 | --- | --- | --- |

@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gofiber/fiber/v3"
 
 	"moneyfly/internal/config"
 )
@@ -37,6 +40,16 @@ func (s *Server) do(t *testing.T, method, path, body, cookie string) *http.Respo
 	return s.doWithHeader(t, method, path, body, "Cookie", cookie)
 }
 
+// testTimeout is how long a request in these tests may take before Fiber's
+// own harness gives up. Fiber's default is one second, which is a fine bound
+// for a small JSON handler and far too tight for the ones that genuinely do
+// work per row: the import commit parses a whole CSV and builds an op per
+// transaction, and under `-race` a few thousand rows comfortably exceeds a
+// second on a loaded CI box. A tight default here does not surface a slow
+// handler, it just makes the suite fail somewhere different depending on
+// what else the machine was doing.
+const testTimeout = 30 * time.Second
+
 // doWithHeader is do with one arbitrary header instead of a cookie — Bearer
 // auth tests need "Authorization", not "Cookie". header is skipped entirely
 // when value is empty, the same as do skips an empty cookie.
@@ -53,7 +66,7 @@ func (s *Server) doWithHeader(t *testing.T, method, path, body, header, value st
 	if value != "" {
 		req.Header.Set(header, value)
 	}
-	res, err := s.App().Test(req)
+	res, err := s.App().Test(req, fiber.TestConfig{Timeout: testTimeout, FailOnTimeout: true})
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
