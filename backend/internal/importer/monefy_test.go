@@ -269,9 +269,44 @@ func TestResolveCategoryOverrideWins(t *testing.T) {
 }
 
 func TestResolveAccountIsCaseAndSpaceInsensitive(t *testing.T) {
-	existing := []NamedRow{{ID: "acc:eur", Name: "EUR"}}
-	got := ResolveAccount(" eur ", existing, nil)
+	existing := []NamedRow{{ID: "acc:eur", Name: "EUR", Currency: "EUR"}}
+	got := ResolveAccount(" eur ", "EUR", existing, nil)
 	if got.ID != "acc:eur" {
 		t.Errorf("got %+v", got)
+	}
+}
+
+// The account equivalent of TestResolveCategoryNeverGuesses: a name that
+// matches but a currency that does not must never resolve to the wrong
+// wallet — two accounts can share a name (the reference export names them
+// after their currency), and importing into the wrong one would misattribute
+// every row to a balance in a currency it was never recorded in.
+func TestResolveAccountRequiresMatchingCurrency(t *testing.T) {
+	existing := []NamedRow{{ID: "acc:cash-eur", Name: "Cash", Currency: "EUR"}}
+	got := ResolveAccount("Cash", "HUF", existing, nil)
+	if got.Resolved() {
+		t.Errorf("matched a EUR account for a HUF row: %+v", got)
+	}
+	if !got.CurrencyMismatch {
+		t.Errorf("got %+v, want CurrencyMismatch so the operator sees why", got)
+	}
+}
+
+// A name that does not exist at all — as opposed to existing in the wrong
+// currency — must not claim a currency mismatch; the two need different UI.
+func TestResolveAccountNoCurrencyMismatchWhenNameIsUnknown(t *testing.T) {
+	existing := []NamedRow{{ID: "acc:cash-eur", Name: "Cash", Currency: "EUR"}}
+	got := ResolveAccount("Wallet", "HUF", existing, nil)
+	if got.Resolved() || got.CurrencyMismatch {
+		t.Errorf("got %+v, want neither resolved nor a currency mismatch", got)
+	}
+}
+
+func TestResolveAccountOverrideWinsRegardlessOfCurrency(t *testing.T) {
+	existing := []NamedRow{{ID: "acc:cash-eur", Name: "Cash", Currency: "EUR"}}
+	overrides := map[string]string{"Cash": "acc:cash-eur"}
+	got := ResolveAccount("Cash", "HUF", existing, overrides)
+	if got.ID != "acc:cash-eur" {
+		t.Errorf("got %+v, want the operator's own mapping to win despite the currency mismatch", got)
 	}
 }

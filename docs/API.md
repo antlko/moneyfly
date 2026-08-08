@@ -278,11 +278,20 @@ promote another.
 | `POST` | `/api/admin/users` | `{email, password, displayName?}` → provisions an account directly, bypassing `registration` entirely — this is the admin acting, not the public signing up. Not signed in by this call: the new person signs in themselves, with the password given here. |
 | `DELETE` | `/api/admin/users/:id` | Removes the account and everything it owns, via the same foreign keys every synced table already carries back to `users` (docs/ARCHITECTURE.md §1) — no separate cleanup step. `400` on your own id: manage your own account from Settings, not here. `409` if it is the last admin. |
 | `PUT` | `/api/admin/users/:id` | `{isAdmin}` → promotes or demotes. Acting on your own id is allowed here (stepping down when someone else already holds it is reasonable) and refused only by the same last-admin rule, `409`. |
+| `GET` | `/api/admin/settings` | The instance-wide `app`/`sync`/`fx` config.yaml fields (docs/CONFIGURATION.md) — never `server.*` or `oidc.*`, which are not part of this response at all. |
+| `PUT` | `/api/admin/settings` | Same shape back, with whatever changed — a full replacement, not a patch, so there is no ambiguity about what an absent field means. Validates and writes `config.yaml`, then swaps the running config in immediately: no restart. `400` with the validation message on a bad value (e.g. an unknown `registration` mode); the file is untouched on that path. |
 
 ```jsonc
 // one entry from GET /api/admin/users
 { "id": "0199…", "email": "you@example.com", "displayName": "You",
   "baseCurrency": "EUR", "isAdmin": true, "createdAt": 1785000000 }
+```
+
+```jsonc
+// GET /api/admin/settings
+{ "registration": "open", "defaultCurrency": "EUR", "sessionTtlDays": 365,
+  "changeLogRetentionDays": 90, "fxEnabled": true, "fxRefreshAt": "04:00",
+  "fxProviders": ["open-er-api", "fawazahmed0"] }
 ```
 
 ## Not found

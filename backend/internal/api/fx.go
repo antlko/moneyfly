@@ -58,32 +58,61 @@ func (s *Server) wakeFX() {
 // config would gradually stop meaning 04:00. Each iteration computes the next
 // occurrence instead.
 //
+// `cfg.FX` is re-read from s.config() every iteration rather than captured
+// once — the Settings screen (handlers_settings.go) can flip `enabled` or
+// change `refresh_at` at runtime, and a value read once at startup would make
+// that change silently wait for a restart to take effect, defeating the
+// point of a live settings screen. handleUpdateSettings calls s.wakeFX()
+// after any FX change specifically so this loop notices promptly rather than
+// only on its next natural wake.
+//
 // A refresh on startup catches up an instance that was switched off overnight,
 // but only when today's rates are actually missing — restarting the container
 // five times must not hammer someone else's free API.
 func (s *Server) fxLoop() {
-	cfg := s.config()
-	if !cfg.FX.On() {
-		slog.Info("fx: refresh disabled")
-		return
-	}
-	hour, minute, err := cfg.FX.RefreshHourMinute()
-	if err != nil {
-		// Validate() has already run; reaching here means a bug, not bad input.
-		slog.Error("fx: bad refresh time", "error", err)
-		return
-	}
-
 	var lastRun time.Time
 	run := func() {
 		s.refreshRates()
 		lastRun = time.Now()
 	}
-
-	if s.ratesMissingToday() {
-		run()
+	// Shared by the startup check and every wake: only when FX is on, there is
+	// genuinely something missing, and not more often than minWakeInterval — the
+	// same catch-up this loop already did once at startup, run again whenever a
+	// wake might mean something changed (a new currency, or FX just switched on
+	// in Settings). Without this, turning FX on there would silently wait for
+	// the next `refresh_at` — up to a day — before fetching anything.
+	catchUp := func() {
+		if !s.config().FX.On() || time.Since(lastRun) < minWakeInterval {
+			return
+		}
+		if s.ratesMissingToday() {
+			run()
+		}
 	}
+
+	catchUp()
+
 	for {
+		cfg := s.config()
+		if !cfg.FX.On() {
+			// Nothing to schedule while off — wait for shutdown or a settings
+			// change (wakeFX) to look again, rather than polling.
+			select {
+			case <-s.stop:
+				return
+			case <-s.fxWake:
+				catchUp()
+			}
+			continue
+		}
+		hour, minute, err := cfg.FX.RefreshHourMinute()
+		if err != nil {
+			// Validate() has already run on this config; reaching here means a
+			// bug, not bad input.
+			slog.Error("fx: bad refresh time", "error", err)
+			return
+		}
+
 		timer := time.NewTimer(time.Until(nextOccurrence(time.Now(), hour, minute)))
 		select {
 		case <-s.stop:
@@ -93,11 +122,7 @@ func (s *Server) fxLoop() {
 			run()
 		case <-s.fxWake:
 			timer.Stop()
-			// Only when there is genuinely something new to fetch, and not more
-			// often than minWakeInterval.
-			if time.Since(lastRun) >= minWakeInterval && s.ratesMissingToday() {
-				run()
-			}
+			catchUp()
 		}
 	}
 }

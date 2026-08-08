@@ -223,9 +223,19 @@ export interface ImportNameStatus {
   name: string
   /** Category only — "expense" | "income". */
   kind?: string
+  /** Account only — the currency its rows use. */
+  currency?: string
   resolved: boolean
   id?: string
   viaAlias?: boolean
+  /**
+   * Account only — the name matched an existing account, but none of that
+   * name has this currency. Distinct from a plain unresolved name: the
+   * account exists, just not for this currency, so the operator needs a
+   * different message and a nudge toward creating a same-name wallet in the
+   * right currency rather than assuming the name was never set up.
+   */
+  currencyMismatch?: boolean
   /** How many rows use this name — what tells you whether an unresolved one is worth pausing for. */
   count: number
 }
@@ -332,6 +342,29 @@ export const adminDeleteUser = (id: string) => api.del<void>(`/api/admin/users/$
 
 export const setAdmin = (id: string, isAdmin: boolean) =>
   api.put<AdminUser>(`/api/admin/users/${id}`, { isAdmin })
+
+/**
+ * The instance-wide settings an admin may change at runtime instead of
+ * hand-editing config.yaml and restarting. Deliberately not everything in
+ * config.yaml: `server.*` (transport config a running process cannot rebind
+ * itself anyway) and `oidc.*` (can carry a client secret) stay
+ * config.yaml/env-only — see backend/internal/config's package doc.
+ */
+export interface InstanceSettings {
+  registration: string
+  defaultCurrency: string
+  sessionTtlDays: number
+  changeLogRetentionDays: number
+  fxEnabled: boolean
+  fxRefreshAt: string
+  fxProviders: string[]
+}
+
+export const getSettings = () => api.get<InstanceSettings>('/api/admin/settings')
+
+/** A PUT, not a PATCH: send the complete settings back with the one field changed. */
+export const updateSettings = (settings: InstanceSettings) =>
+  api.put<InstanceSettings>('/api/admin/settings', settings)
 
 /** Where to send the browser to start an OIDC flow. Not a fetch — a navigation. */
 export function oidcStartUrl(providerId: string, opts: { link?: boolean; redirect?: string } = {}) {

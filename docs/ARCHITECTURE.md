@@ -14,14 +14,19 @@ change. Companion docs: [SYNC.md](SYNC.md) (the sync protocol — the heart of t
 
 | Store | Path | Holds | Written by |
 | --- | --- | --- | --- |
-| `config.yaml` | `<config-dir>/config.yaml` | listen address, public URL, OIDC providers, FX chain, retention | a human, in an editor |
+| `config.yaml` | `<config-dir>/config.yaml` | listen address, public URL, OIDC providers, FX chain, retention | a human, in an editor, **or** an admin from Settings → Instance for the `app`/`sync`/`fx` sections only |
 | SQLite | `<config-dir>/moneyfly.db` | users, identities, sessions, devices, **every domain row**, `change_log`, FX rates, integrations **and their secrets** | `internal/db` |
 | IndexedDB | each browser profile | a full replica of that user's domain rows, the push queue, the sync cursor, **plus a cache of exchange rates** | `web-ui/src/db`, driven by `web-ui/src/sync` and `web-ui/src/stores/fx.ts` |
 
 The split rule inherited from upmonitor still holds — hand-editable configuration goes in YAML;
 history, volume and secrets go in SQLite — but moneyfly lands almost everything in SQLite, because
-almost everything syncs. That is why `internal/config` is **load-only**: no `Save`, no `Clone`, no
-copy-on-write path, and no endpoint that returns the raw file.
+almost everything syncs. `internal/config` is not fully load-only any more: `config.UpdateSettings`
+(`GET`/`PUT /api/admin/settings`, admin-only) can change and persist the `app`/`sync`/`fx` sections
+at runtime. What still holds, on purpose, is that there is no endpoint that returns or accepts the
+*whole* file — `server.*` (a running process cannot rebind its own listen address) and `oidc.*`
+(can carry a client secret) are never read or written by that path. `UpdateSettings` re-reads those
+two sections fresh from disk before every write rather than round-tripping the in-memory `Config`,
+so an OIDC secret pulled in from the environment can never end up written back to the file.
 
 **The client, not the server, is the UI's data source.** Screens read IndexedDB. The API is used for
 authentication, sync, and the operations that genuinely need a server (import, export, integrations,

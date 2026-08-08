@@ -10,6 +10,7 @@ import {
   Plus,
   Repeat,
   Settings,
+  SlidersHorizontal,
   Users,
 } from '@lucide/vue'
 import type { Component } from 'vue'
@@ -49,7 +50,11 @@ const BASE_NAV: { to: string; label: string; icon: Component }[] = [
 // would not be a dead end for.
 const NAV = computed(() =>
   auth.user?.isAdmin
-    ? [...BASE_NAV, { to: '/admin/users', label: 'Users', icon: Users }]
+    ? [
+        ...BASE_NAV,
+        { to: '/admin/users', label: 'Users', icon: Users },
+        { to: '/admin/settings', label: 'Instance', icon: SlidersHorizontal },
+      ]
     : BASE_NAV,
 )
 </script>

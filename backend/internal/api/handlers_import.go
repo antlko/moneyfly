@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -30,7 +31,7 @@ func toParseErrorDTOs(errs []importer.RowError) []parseErrorDTO {
 func toNamedRows(names []db.NameKind) []importer.NamedRow {
 	out := make([]importer.NamedRow, 0, len(names))
 	for _, n := range names {
-		out = append(out, importer.NamedRow{ID: n.ID, Name: n.Name, Kind: n.Kind})
+		out = append(out, importer.NamedRow{ID: n.ID, Name: n.Name, Kind: n.Kind, Currency: n.Currency})
 	}
 	return out
 }
@@ -39,11 +40,17 @@ func toNamedRows(names []db.NameKind) []importer.NamedRow {
 // with how it resolves against what the account already has.
 type nameStatusDTO struct {
 	Name     string `json:"name"`
-	Kind     string `json:"kind,omitempty"` // category only
+	Kind     string `json:"kind,omitempty"`     // category only
+	Currency string `json:"currency,omitempty"` // account only
 	Resolved bool   `json:"resolved"`
 	ID       string `json:"id,omitempty"`
 	ViaAlias bool   `json:"viaAlias,omitempty"`
-	Count    int    `json:"count"`
+	// CurrencyMismatch means the name matched an existing account, but none of
+	// that name has this currency — surfaced separately from a plain "no such
+	// account" so the operator knows the account exists, just not for this
+	// currency, per importer.ResolveAccount.
+	CurrencyMismatch bool `json:"currencyMismatch,omitempty"`
+	Count            int  `json:"count"`
 }
 
 // summariseCategories returns each distinct (name, kind) pair in the CSV, in
@@ -73,20 +80,32 @@ func summariseCategories(rows []importer.Row, existing []importer.NamedRow) []na
 	return out
 }
 
+// summariseAccounts groups by name alone, taking the currency of the first
+// row seen for it as representative — true for every real Monefy export,
+// where an account name is a permanent wallet and so a permanent currency.
+// A row whose own currency later disagrees with that is still checked and
+// reported individually by buildImportOps at commit time, which is why this
+// summary is a preview, not the authority.
 func summariseAccounts(rows []importer.Row, existing []importer.NamedRow) []nameStatusDTO {
 	var order []string
 	counts := map[string]int{}
+	currency := map[string]string{}
 	for _, r := range rows {
 		if counts[r.Account] == 0 {
 			order = append(order, r.Account)
+			currency[r.Account] = r.Currency
 		}
 		counts[r.Account]++
 	}
 
 	out := make([]nameStatusDTO, 0, len(order))
 	for _, name := range order {
-		res := importer.ResolveAccount(name, existing, nil)
-		out = append(out, nameStatusDTO{Name: name, Resolved: res.Resolved(), ID: res.ID, Count: counts[name]})
+		cur := currency[name]
+		res := importer.ResolveAccount(name, cur, existing, nil)
+		out = append(out, nameStatusDTO{
+			Name: name, Currency: cur, Resolved: res.Resolved(), ID: res.ID,
+			CurrencyMismatch: res.CurrencyMismatch, Count: counts[name],
+		})
 	}
 	return out
 }
@@ -198,19 +217,26 @@ func (s *Server) handleImportCommit(c fiber.Ctx) error {
 		return err
 	}
 
+	// ApplyOps rejects a batch over syncproto.MaxOpsPerPush outright, and an
+	// import is routinely thousands of rows in one request — nothing else
+	// that builds ops (a push, the recurring worker) hands over more than a
+	// device's own queue or a single rule's tick, so chunking is only ever
+	// needed here.
 	var accepted int
-	if len(ops) > 0 {
-		result, err := s.conn().ApplyOps(user.ID, ops)
+	var lastSeq int64
+	for chunk := range slices.Chunk(ops, syncproto.MaxOpsPerPush) {
+		result, err := s.conn().ApplyOps(user.ID, chunk)
 		if err != nil {
 			return err
 		}
-		accepted = result.Accepted
-		// Every one of these transactions is new to every device, including
-		// whichever one is running the import — unlike an ordinary push, there
-		// is no originating device already holding the rows locally to skip.
-		if result.Accepted > 0 {
-			s.events.publish(user.ID, syncEvent{Seq: result.ServerSeq, DeviceID: serverDeviceID})
-		}
+		accepted += result.Accepted
+		lastSeq = result.ServerSeq
+	}
+	// Every one of these transactions is new to every device, including
+	// whichever one is running the import — unlike an ordinary push, there
+	// is no originating device already holding the rows locally to skip.
+	if accepted > 0 {
+		s.events.publish(user.ID, syncEvent{Seq: lastSeq, DeviceID: serverDeviceID})
 	}
 
 	return c.JSON(importCommitResponse{
@@ -237,6 +263,11 @@ func buildImportOps(
 	categoryMap, accountMap map[string]string,
 	existingKeys map[string]bool,
 ) (ops []syncproto.Op, alreadyImported int, unresolved []parseErrorDTO, err error) {
+	// Initialised, never nil: a Go nil slice marshals to JSON `null`, and the
+	// client's type says this is always an array — an import with nothing
+	// unresolved would otherwise hand the frontend a `null` where it calls
+	// `.length`, the exact incident `api.rejections` exists to avoid.
+	unresolved = []parseErrorDTO{}
 	occurrence := map[string]int{}
 
 	for _, row := range rows {
@@ -246,10 +277,13 @@ func buildImportOps(
 				Line: row.Line, Reason: fmt.Sprintf("category %q is not mapped", row.Category)})
 			continue
 		}
-		acc := importer.ResolveAccount(row.Account, existingAccounts, accountMap)
+		acc := importer.ResolveAccount(row.Account, row.Currency, existingAccounts, accountMap)
 		if !acc.Resolved() {
-			unresolved = append(unresolved, parseErrorDTO{
-				Line: row.Line, Reason: fmt.Sprintf("account %q is not mapped", row.Account)})
+			reason := fmt.Sprintf("account %q is not mapped", row.Account)
+			if acc.CurrencyMismatch {
+				reason = fmt.Sprintf("account %q exists but not in %s", row.Account, row.Currency)
+			}
+			unresolved = append(unresolved, parseErrorDTO{Line: row.Line, Reason: reason})
 			continue
 		}
 

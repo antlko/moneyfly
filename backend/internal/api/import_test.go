@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	syncproto "moneyfly/internal/sync"
@@ -184,6 +186,47 @@ func TestImportCommitReportsUnresolvedWithoutBlockingOthers(t *testing.T) {
 	}
 }
 
+// An account name that matches an existing account, but not that account's
+// currency, must never resolve to it — the incident this guards against is a
+// HUF export auto-matching an existing EUR "Cash" account by name alone and
+// misattributing every row to a balance in the wrong currency. Both preview
+// and commit must catch it, and an explicit remap to a same-currency account
+// must still succeed.
+func TestImportAccountCurrencyMismatchBlocksAutoResolve(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedCategory(t, s, userID, "cat:food", "Food", "expense")
+	seedAccount(t, s, userID, "acc:cash-eur", "Cash", "EUR")
+	seedAccount(t, s, userID, "acc:cash-huf", "Forint Cash", "HUF")
+
+	csv := importHeader + "19.07.2021,Cash,Food,-1000,HUF,-1000,HUF,taxi\n"
+
+	preview := decodeBody[importPreviewResponse](t, s.do(t, "POST", "/api/import/monefy/preview",
+		previewBody(t, csv), cookie))
+	if len(preview.Accounts) != 1 || preview.Accounts[0].Resolved {
+		t.Fatalf("accounts = %+v, want the EUR account left unresolved for a HUF row", preview.Accounts)
+	}
+	if !preview.Accounts[0].CurrencyMismatch {
+		t.Errorf("accounts[0] = %+v, want CurrencyMismatch set", preview.Accounts[0])
+	}
+
+	// Committing without a mapping must block the row, not silently attach it
+	// to the EUR account.
+	blocked := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, nil, nil), cookie))
+	if blocked.Imported != 0 || len(blocked.Unresolved) != 1 {
+		t.Fatalf("commit without a mapping = %+v, want the row blocked", blocked)
+	}
+
+	// Mapping explicitly to the matching-currency account must succeed.
+	mapped := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, nil, map[string]string{"Cash": "acc:cash-huf"}), cookie))
+	if mapped.Imported != 1 {
+		t.Fatalf("commit with an explicit mapping = %+v, want 1 imported", mapped)
+	}
+}
+
 // Re-committing the same CSV — the normal way someone re-exports "since last
 // time" and it overlaps — must not duplicate the ledger.
 func TestImportCommitIsIdempotent(t *testing.T) {
@@ -218,6 +261,42 @@ func TestImportCommitIsIdempotent(t *testing.T) {
 	}
 	if txns != 2 {
 		t.Fatalf("got %d transactions stored after two commits of the same file, want 2", txns)
+	}
+}
+
+// A real export that exceeds db.ApplyOps' MaxOpsPerPush in one commit (the
+// exact incident: a 1491-row file 500'd with "batch of 1491 exceeds the 1000
+// op limit") must still import in full — the commit handler chunks the ops
+// it builds rather than handing them to ApplyOps in one call.
+func TestImportCommitChunksBatchesOverOpLimit(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedCategory(t, s, userID, "cat:food", "Food", "expense")
+	seedAccount(t, s, userID, "acc:cash", "Cash", "EUR")
+
+	const rows = int(syncproto.MaxOpsPerPush) + 491
+	var b strings.Builder
+	b.WriteString(importHeader)
+	for i := range rows {
+		fmt.Fprintf(&b, "19.07.2021,Cash,Food,-10,EUR,-10,EUR,row %d\n", i)
+	}
+
+	commit := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, b.String(), nil, nil), cookie))
+	if commit.Imported != rows {
+		t.Fatalf("imported = %d, want %d", commit.Imported, rows)
+	}
+
+	snap := decodeBody[snapshotResponse](t, s.do(t, "GET", "/api/sync/snapshot", "", cookie))
+	var txns int
+	for _, row := range snap.Rows {
+		if row.Entity == "txn" {
+			txns++
+		}
+	}
+	if txns != rows {
+		t.Fatalf("got %d transactions stored, want %d", txns, rows)
 	}
 }
 

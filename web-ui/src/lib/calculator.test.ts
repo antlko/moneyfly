@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { current, display, initialState, press, total, typed, type Key } from './calculator'
+import { clampDecimals, current, display, initialState, press, total, typed, type Key } from './calculator'
 
 /** Type a sequence of keys and return the final state. */
 function type(keys: string, maxDecimals = 2) {
@@ -130,6 +130,32 @@ describe('clear', () => {
     const state = type('1 2 + 3 clear')
     expect(display(state)).toBe('0')
     expect(total(state)).toBe(0)
+  })
+})
+
+// Switching the account mid-entry changes the currency, and a currency with
+// fewer decimals must trim the typed amount rather than wipe it — this used
+// to call 'clear' and reset the whole entry to zero.
+describe('clampDecimals', () => {
+  it('leaves an amount alone when it already fits', () => {
+    expect(display(clampDecimals(type('1 2 . 4'), 2))).toBe('12.4')
+    expect(display(clampDecimals(type('1 2'), 0))).toBe('12')
+  })
+
+  it('trims excess decimals instead of clearing the amount', () => {
+    expect(display(clampDecimals(type('1 2 . 3 4', 2), 1))).toBe('12.3')
+  })
+
+  it('drops the fraction entirely for a zero-decimal currency', () => {
+    expect(display(clampDecimals(type('1 2 . 3 4', 2), 0))).toBe('12')
+  })
+
+  it('falls back to zero rather than a bare dot', () => {
+    expect(display(clampDecimals(type('. 5', 2), 0))).toBe('0')
+  })
+
+  it('drops a trailing dot with no fractional digits too', () => {
+    expect(display(clampDecimals(type('1 2 .', 2), 0))).toBe('12')
   })
 })
 

@@ -129,9 +129,16 @@ running the dev servers.
   `cat-*` for the category palette). Never hardcode a hex in a component. Category rows store a
   palette *key* (`"rose"`), never a hex — otherwise a re-theme would have to rewrite synced rows on
   every device.
-- **There is no raw config editor endpoint.** upmonitor has one; moneyfly must not, because
-  `config.yaml` carries OIDC client secrets. `config` is load-only: no `Save`, no `Clone`, no
-  copy-on-write path.
+- **There is no raw config editor endpoint, and there still must never be one.** upmonitor has
+  one; moneyfly must not, because `config.yaml` can carry OIDC client secrets. What exists instead
+  is a narrower admin-only settings API (`GET`/`PUT /api/admin/settings`, `handlers_settings.go`)
+  scoped to exactly `config.Settings` — `app`, `sync`, `fx` — and nothing else. `server.*` and
+  `oidc.*` stay config.yaml/env-only, by construction: `config.UpdateSettings` re-reads them fresh
+  from disk before every write rather than round-tripping whatever the in-memory `Config` holds, so
+  an OIDC secret pulled in from the environment can never end up back in the file. A fresh instance
+  also gets a fully-populated `config.yaml` written on first boot (`config.Load`), not just an
+  in-memory default, so there is something on disk to hand-edit for the fields that stay
+  hand-edit-only.
 - **Defaults live in one place** — `internal/config` exports them (`DefaultCurrency`,
   `DefaultChangeLogRetentionDays`, …) precisely so API fallbacks cannot drift. Don't re-hardcode a
   default at a use site.

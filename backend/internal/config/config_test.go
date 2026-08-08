@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -173,6 +174,152 @@ func TestFXIsOnWhenUnconfigured(t *testing.T) {
 				t.Errorf("FX.On() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A bare `docker run` against an empty volume must leave behind a
+// config.yaml that shows every field there is to adjust, not just an
+// in-memory default an operator has no way to discover short of reading the
+// source.
+func TestLoadMissingFileWritesFullDefaultFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := os.Stat(Path(dir)); !os.IsNotExist(err) {
+		t.Fatalf("config.yaml already exists before Load: %v", err)
+	}
+
+	if _, err := Load(dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	written, err := Load(dir) // re-read from disk, not the first call's in-memory copy
+	if err != nil {
+		t.Fatalf("re-Load after bootstrap: %v", err)
+	}
+	if written.Server.Addr != DefaultAddr {
+		t.Errorf("addr = %q, want %q", written.Server.Addr, DefaultAddr)
+	}
+	if written.App.Registration != RegistrationOpen {
+		t.Errorf("registration = %q, want %q", written.App.Registration, RegistrationOpen)
+	}
+	if written.Sync.ChangeLogRetentionDays != DefaultChangeLogRetentionDays {
+		t.Errorf("retention = %d, want %d", written.Sync.ChangeLogRetentionDays, DefaultChangeLogRetentionDays)
+	}
+	if !written.FX.On() || written.FX.RefreshAt != DefaultFXRefreshAt || len(written.FX.Providers) == 0 {
+		t.Errorf("fx = %+v, want the full set of defaults written out", written.FX)
+	}
+}
+
+// Environment variables must win at every Load, which means they must never
+// be the thing captured in the bootstrap file — otherwise a value only ever
+// meant to override this one run would quietly become the new on-disk
+// default forever.
+func TestLoadDoesNotBakeEnvIntoBootstrapFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MONEYFLY_ADDR", ":7070")
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Addr != ":7070" {
+		t.Fatalf("effective addr = %q, want the env value", cfg.Server.Addr)
+	}
+
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if strings.Contains(string(raw), "7070") {
+		t.Errorf("the env-only addr leaked into the written file:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), DefaultAddr) {
+		t.Errorf("the written file does not contain the real default %q:\n%s", DefaultAddr, raw)
+	}
+}
+
+// The whole reason UpdateSettings re-reads config.yaml from disk instead of
+// taking a Config from the caller: an OIDC client secret supplied only by
+// environment lives in the in-memory copy, and must never be written out.
+func TestUpdateSettingsNeverWritesAnEnvOnlySecret(t *testing.T) {
+	dir := write(t, `
+server:
+  base_url: https://money.example.com
+oidc:
+  - id: my-idp
+    issuer: https://idp.example.com
+    client_id: abc
+`)
+	t.Setenv("MONEYFLY_OIDC_MY_IDP_CLIENT_SECRET", "s3cret-value")
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Provider("my-idp").ClientSecret != "s3cret-value" {
+		t.Fatalf("effective client_secret not applied from env")
+	}
+
+	settings := SettingsOf(cfg)
+	settings.App.Registration = RegistrationClosed
+	updated, err := UpdateSettings(dir, settings)
+	if err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	if updated.App.Registration != RegistrationClosed {
+		t.Errorf("returned config registration = %q, want closed", updated.App.Registration)
+	}
+	// server.* and oidc.* must survive untouched.
+	if updated.Server.BaseURL != "https://money.example.com" {
+		t.Errorf("base_url = %q, want it preserved", updated.Server.BaseURL)
+	}
+	if updated.Provider("my-idp") == nil {
+		t.Fatal("oidc provider dropped by UpdateSettings")
+	}
+
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if strings.Contains(string(raw), "s3cret-value") {
+		t.Errorf("UpdateSettings wrote the env-only client secret to disk:\n%s", raw)
+	}
+
+	// And the persisted change must actually be there for the next boot.
+	reloaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("reload after UpdateSettings: %v", err)
+	}
+	if reloaded.App.Registration != RegistrationClosed {
+		t.Errorf("registration did not persist: got %q", reloaded.App.Registration)
+	}
+}
+
+// An invalid settings change must be rejected without touching the file —
+// the operator's existing, working config must not be overwritten by
+// something that would fail Validate on the next restart.
+func TestUpdateSettingsRejectsInvalidWithoutWriting(t *testing.T) {
+	dir := write(t, "app:\n  registration: open\n")
+	before, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	settings := SettingsOf(cfg)
+	settings.App.Registration = "sometimes"
+	if _, err := UpdateSettings(dir, settings); err == nil {
+		t.Fatal("want an error for an invalid registration mode, got nil")
+	}
+
+	after, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("file changed despite a rejected update:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 

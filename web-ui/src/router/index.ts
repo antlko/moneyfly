@@ -84,6 +84,15 @@ const router = createRouter({
       meta: { adminOnly: true },
     },
     {
+      // Same guarding as /admin/users. Deliberately not everything in
+      // config.yaml — see InstanceSettingsView.vue's own doc comment for
+      // what stays file/env-only and why.
+      path: '/admin/settings',
+      name: 'admin-settings',
+      component: () => import('@/views/InstanceSettingsView.vue'),
+      meta: { adminOnly: true },
+    },
+    {
       // `/sync` is the user-facing name — the dashboard's status line points at
       // it, so "Offline" has somewhere to lead. `/debug/sync` is the old path
       // and still works; it additionally shows the row-level debug tools.

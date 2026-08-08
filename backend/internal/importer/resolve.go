@@ -4,11 +4,13 @@ import "strings"
 
 // NamedRow is an existing category or account, the shape a CSV name is
 // matched against. Kind is only meaningful for categories ("expense" |
-// "income"); it is empty for accounts, which have none.
+// "income"); Currency is only meaningful for accounts — each is empty on
+// the other.
 type NamedRow struct {
-	ID   string
-	Name string
-	Kind string
+	ID       string
+	Name     string
+	Kind     string
+	Currency string
 }
 
 // categoryAlias maps a handful of category names verified to have changed
@@ -43,6 +45,10 @@ type Resolution struct {
 	Name     string
 	ID       string
 	ViaAlias bool
+	// CurrencyMismatch is set when an account name matched but no account of
+	// that name has the row's currency — never set for categories, which have
+	// no currency to disagree on.
+	CurrencyMismatch bool
 }
 
 func (r Resolution) Resolved() bool { return r.ID != "" }
@@ -75,18 +81,29 @@ func ResolveCategory(name, kind string, existing []NamedRow, overrides map[strin
 
 // ResolveAccount is ResolveCategory without the kind scope — an account has
 // none — and with no alias table: the documented renames are category names
-// only, and accounts in the reference export are just currency codes ("EUR",
-// "HUF"), which are already exact matches against whatever this app calls
-// them once mapped once.
-func ResolveAccount(name string, existing []NamedRow, overrides map[string]string) Resolution {
+// only. In its place it is scoped by currency: a CSV account name that
+// matches an existing account by name only, not currency, is not resolved.
+// Two wallets can coincidentally share a name (accounts in the reference
+// export are just currency codes — "EUR", "HUF" — so this is exactly what a
+// rename, or a second wallet opened in a new currency, produces), and
+// importing silently into the wrong one would misattribute every one of its
+// rows to a balance in a currency they were never recorded in. An explicit
+// override always wins regardless of currency — that is the operator seeing
+// the mismatch and choosing anyway.
+func ResolveAccount(name, currency string, existing []NamedRow, overrides map[string]string) Resolution {
 	if id, ok := overrides[name]; ok && id != "" {
 		return Resolution{Name: name, ID: id}
 	}
 	norm := normalize(name)
+	mismatch := false
 	for _, a := range existing {
-		if normalize(a.Name) == norm {
+		if normalize(a.Name) != norm {
+			continue
+		}
+		if a.Currency == currency {
 			return Resolution{Name: name, ID: a.ID}
 		}
+		mismatch = true
 	}
-	return Resolution{Name: name}
+	return Resolution{Name: name, CurrencyMismatch: mismatch}
 }

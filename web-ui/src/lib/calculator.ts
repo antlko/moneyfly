@@ -180,3 +180,23 @@ function format(value: number): string {
 
 /** What the amount field shows. */
 export const display = (state: CalcState): string => state.entry
+
+/**
+ * Trim the entry to a new currency's decimal limit, without wiping the
+ * amount — used when the account (and so the currency) changes mid-entry.
+ *
+ * `pressDigit` already refuses a digit that would not survive the round trip
+ * to minor units; this applies the same rule retroactively to whatever was
+ * typed under the *previous* currency's limit, e.g. 12.34 EUR becoming 12
+ * when the account is switched to HUF (0 decimals). It only ever shortens
+ * `entry` — `accumulator`/`operator` are left alone, since a pending
+ * mid-expression amount is still a plain number until `=` folds it in, and
+ * `toMinor` rounds to the target currency's exponent at that point anyway.
+ */
+export function clampDecimals(state: CalcState, maxDecimals: number): CalcState {
+  const dot = state.entry.indexOf('.')
+  if (dot < 0) return state
+  if (maxDecimals === 0) return { ...state, entry: state.entry.slice(0, dot) || '0' }
+  if (state.entry.length - dot - 1 <= maxDecimals) return state
+  return { ...state, entry: state.entry.slice(0, dot + 1 + maxDecimals) }
+}

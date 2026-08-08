@@ -180,6 +180,10 @@ func (s *Server) routes() {
 	app.Post("/api/admin/users", authed, s.adminMW, s.handleAdminCreateUser)
 	app.Delete("/api/admin/users/:id", authed, s.adminMW, s.handleAdminDeleteUser)
 	app.Put("/api/admin/users/:id", authed, s.adminMW, s.handleSetAdmin)
+	// Instance-wide settings (app/sync/fx) — never server.* or oidc.*, which
+	// stay config.yaml/env-only. See internal/config's package doc.
+	app.Get("/api/admin/settings", authed, s.adminMW, s.handleGetSettings)
+	app.Put("/api/admin/settings", authed, s.adminMW, s.handleUpdateSettings)
 
 	// SPA fallback — must be registered last.
 	app.Use(s.serveSPA)
@@ -240,6 +244,15 @@ func (s *Server) config() *config.Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cfg
+}
+
+// setConfig swaps in a config a settings change has already validated and
+// persisted (config.UpdateSettings) — this only ever updates the in-memory
+// copy every request and background loop reads through s.config().
+func (s *Server) setConfig(cfg *config.Config) {
+	s.mu.Lock()
+	s.cfg = cfg
+	s.mu.Unlock()
 }
 
 func (s *Server) conn() *db.DB {

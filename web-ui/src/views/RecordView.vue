@@ -13,7 +13,7 @@ import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
 import RecurringSheet from '@/components/monefy/RecurringSheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
-import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
+import { clampDecimals, display, initialState, press, total, typed, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { nextOccurrence, today, type RecurringFreq } from '@/lib/period'
@@ -189,8 +189,9 @@ function pickAccount(next: Row) {
   accountId.value = String(next.id)
   // The new currency may allow fewer decimals than the old one (EUR to HUF), so
   // a part-typed amount has to be re-normalised rather than left with a
-  // fraction the currency cannot express.
-  calc.value = press(calc.value, 'clear', exponent(currency.value))
+  // fraction the currency cannot express — not cleared outright, which used to
+  // throw away whatever amount was already typed.
+  calc.value = clampDecimals(calc.value, exponent(currency.value))
 }
 
 async function record(category: Row) {

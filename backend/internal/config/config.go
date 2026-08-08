@@ -1,11 +1,19 @@
-// Package config loads the instance's config.yaml.
+// Package config loads the instance's config.yaml, and writes back the one
+// slice of it — `app`, `sync`, `fx` — an admin may change from the Settings
+// screen at runtime.
 //
 // Unlike upmonitor, moneyfly's config.yaml holds **no user data** — accounts,
 // categories and transactions all live in SQLite because they are synced. What
-// remains here is instance infrastructure the operator hand-edits: listen
-// address, public URL, OIDC providers, FX provider chain, retention. That is why
-// this package is load-only: there is no Save, no Clone and no copy-on-write
-// path, and the API never exposes the raw file (it contains OIDC secrets).
+// remains here is instance infrastructure: listen address, public URL, OIDC
+// providers, FX provider chain, retention. `server.*` and `oidc.*` stay
+// hand-edited-file-or-env only, on purpose — `server.*` is transport
+// configuration a running process cannot rebind itself anyway, and `oidc.*`
+// can carry a client secret, which must never round-trip through a write
+// endpoint. UpdateSettings enforces this by re-reading `server`/`oidc` from
+// disk and leaving them untouched rather than writing back whatever the
+// in-memory Config happens to hold — which, for OIDC, may already contain a
+// secret pulled in from the environment by applyEnv, and that must never be
+// the thing written to a file.
 package config
 
 import (
@@ -153,24 +161,108 @@ func Path(dir string) string { return filepath.Join(dir, "config.yaml") }
 // DBPath returns the SQLite database path for a config directory.
 func DBPath(dir string) string { return filepath.Join(dir, "moneyfly.db") }
 
-// Load reads config.yaml from dir. A missing file is not an error: the caller
-// gets a fully defaulted config, so a bare `docker run` with an empty volume
-// starts. Environment variables are applied last and always win.
+// Load reads config.yaml from dir. A missing file is not an error: a bare
+// `docker run` against an empty volume gets a fully defaulted config — and
+// that full set of defaults is also written to config.yaml on the spot, so
+// the file an operator opens next always shows every field there is to
+// adjust, rather than the operator having to already know a field exists
+// before they can set it. Environment variables are applied after that write
+// and always win, so they are never what ends up baked into the file.
 func Load(dir string) (*Config, error) {
 	cfg := &Config{}
 	data, err := os.ReadFile(Path(dir))
+	existed := true
 	switch {
 	case err == nil:
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", Path(dir), err)
 		}
 	case os.IsNotExist(err):
-		// Defaults only.
+		existed = false
 	default:
 		return nil, fmt.Errorf("read %s: %w", Path(dir), err)
 	}
 
 	cfg.normalize()
+	if !existed {
+		if err := save(dir, cfg); err != nil {
+			return nil, err
+		}
+	}
+	cfg.applyEnv()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// save marshals cfg as YAML and writes it to dir's config.yaml, whole. 0o600
+// because a config.yaml an operator goes on to hand-edit is exactly where an
+// OIDC client secret is documented to belong (docs/CONFIGURATION.md) — this
+// package's own write path never puts one there, but the file permissions
+// have to assume one might arrive by another route.
+func save(dir string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(Path(dir), data, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", Path(dir), err)
+	}
+	return nil
+}
+
+// Settings is the subset of Config an admin may change at runtime from the
+// Settings screen, instead of hand-editing config.yaml and restarting.
+// Everything else on Config — server.*, oidc.* — is deliberately absent; see
+// the package doc for why.
+type Settings struct {
+	App  App
+	Sync Sync
+	FX   FX
+}
+
+// SettingsOf extracts the editable subset of a loaded Config, so a caller
+// building the settings screen's current values does not need to know its
+// shape independently.
+func SettingsOf(c *Config) Settings { return Settings{App: c.App, Sync: c.Sync, FX: c.FX} }
+
+// ValidateSettings checks a Settings on its own — the App/Sync/FX subset of
+// what Config.Validate checks, with no dependency on Server or OIDC — so the
+// settings API can reject a bad value with a 400 before ever touching disk,
+// rather than only finding out from UpdateSettings after it has already
+// tried to write.
+func ValidateSettings(s Settings) error {
+	return (&Config{App: s.App, Sync: s.Sync, FX: s.FX}).Validate()
+}
+
+// UpdateSettings applies s on top of what config.yaml currently holds on
+// disk — never on top of the in-memory, env-overlaid Config a caller might
+// otherwise have to hand, which is exactly what must not happen: an OIDC
+// client secret supplied only by MONEYFLY_OIDC_<ID>_CLIENT_SECRET lives in
+// that in-memory copy and must never be written to the file. Re-reading the
+// file fresh is what keeps server.* and oidc.* untouched by this path
+// entirely, secret or not.
+//
+// It returns the new effective Config — settings applied, environment
+// re-overlaid — for the caller to swap into whatever is currently serving
+// requests.
+func UpdateSettings(dir string, s Settings) (*Config, error) {
+	data, err := os.ReadFile(Path(dir))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", Path(dir), err)
+	}
+	cfg := &Config{}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", Path(dir), err)
+	}
+	cfg.App, cfg.Sync, cfg.FX = s.App, s.Sync, s.FX
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if err := save(dir, cfg); err != nil {
+		return nil, err
+	}
 	cfg.applyEnv()
 	if err := cfg.Validate(); err != nil {
 		return nil, err

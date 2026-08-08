@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Repeat,
   Settings,
+  SlidersHorizontal,
   Users,
 } from '@lucide/vue'
 import type { Component } from 'vue'
@@ -40,7 +41,11 @@ const BASE_ITEMS: { to: string; label: string; icon: Component; ready: boolean }
 // just be a dead end dressed as a feature.
 const ITEMS = computed(() =>
   auth.user?.isAdmin
-    ? [...BASE_ITEMS, { to: '/admin/users', label: 'Users', icon: Users, ready: true }]
+    ? [
+        ...BASE_ITEMS,
+        { to: '/admin/users', label: 'Users', icon: Users, ready: true },
+        { to: '/admin/settings', label: 'Instance', icon: SlidersHorizontal, ready: true },
+      ]
     : BASE_ITEMS,
 )
 

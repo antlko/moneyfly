@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { FileUp } from '@lucide/vue'
 import { computed, ref } from 'vue'
+import { toast } from 'vue-sonner'
 
 import * as http from '@/api/http'
 import type { ImportNameStatus, ImportPreview, ImportResult } from '@/api/http'
@@ -8,6 +9,7 @@ import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { useAccountsStore } from '@/stores/accounts'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useFxStore } from '@/stores/fx'
 import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
@@ -22,6 +24,7 @@ const taxonomy = useTaxonomyStore()
 const accounts = useAccountsStore()
 const dashboard = useDashboardStore()
 const settings = useSettingsStore()
+const fx = useFxStore()
 
 type Step = 'pick' | 'preview' | 'done'
 const step = ref<Step>('pick')
@@ -89,13 +92,15 @@ const creatingAccountFor = ref<string | null>(null)
 const newAccountName = ref('')
 const newAccountCurrency = ref('')
 
-function startNewAccount(name: string) {
-  creatingAccountFor.value = name
-  newAccountName.value = name
-  // The reference export names accounts after their currency ("EUR", "HUF");
-  // when that happens to be true here too, it is the right default rather
-  // than a coincidence to ignore.
-  newAccountCurrency.value = /^[A-Za-z]{3}$/.test(name) ? name.toUpperCase() : dashboard.baseCurrency
+function startNewAccount(account: ImportNameStatus) {
+  creatingAccountFor.value = account.name
+  newAccountName.value = account.name
+  // Prefer the currency actually observed in the CSV for this account. The
+  // reference export also names accounts after their currency ("EUR", "HUF"),
+  // which is the fallback for a status the server did not send one on.
+  newAccountCurrency.value =
+    account.currency ||
+    (/^[A-Za-z]{3}$/.test(account.name) ? account.name.toUpperCase() : dashboard.baseCurrency)
 }
 
 async function createMappedAccount() {
@@ -103,6 +108,18 @@ async function createMappedAccount() {
   const name = newAccountName.value.trim()
   const currency = newAccountCurrency.value.trim().toUpperCase()
   if (!csvName || !name || currency.length !== 3) return
+
+  // Creating the account is what tells this screen the currency is wanted —
+  // declare it the same way the Currencies screen's own "add" does, so a
+  // HUF export does not require a separate trip there first.
+  const declared = settings.get<string[]>(SETTING.currencies, [])
+  if (currency !== dashboard.baseCurrency && !declared.includes(currency)) {
+    await settings.set(SETTING.currencies, [...declared, currency].sort())
+    if (!(await fx.addQuote(currency, dashboard.baseCurrency))) {
+      toast(`No rate for ${currency} yet — it will arrive with the next update`)
+    }
+  }
+
   const id = await accounts.create({
     name,
     currency,
@@ -116,6 +133,10 @@ async function createMappedAccount() {
 
 const currencyOptions = computed(() => {
   const codes = new Set<string>([dashboard.baseCurrency, ...settings.get<string[]>(SETTING.currencies, [])])
+  // The account being created right now must be selectable even when its
+  // currency has never been declared — otherwise an operator importing a
+  // HUF export with no HUF account yet could never actually pick HUF here.
+  if (creatingAccountFor.value) codes.add(newAccountCurrency.value)
   return [...codes].filter((c) => c.length === 3).sort()
 })
 
@@ -226,25 +247,34 @@ function startOver() {
 
         <section v-if="unresolvedAccounts.length" class="rounded-2xl bg-mf-surface p-4">
           <h2 class="mb-1 font-medium">Accounts to map</h2>
+          <p class="mb-3 text-sm text-mf-muted">
+            Map each to an existing account in the same currency, or create a new one — a row left
+            unmapped is skipped, not guessed at.
+          </p>
           <ul class="divide-y divide-mf-muted/20">
             <li v-for="a in unresolvedAccounts" :key="a.name" class="py-2.5">
               <div class="flex items-center gap-3">
                 <div class="min-w-0 flex-1">
                   <p class="truncate">{{ a.name }}</p>
-                  <p class="text-xs text-mf-muted">{{ a.count }} row{{ a.count === 1 ? '' : 's' }}</p>
+                  <p class="text-xs text-mf-muted">
+                    {{ a.count }} row{{ a.count === 1 ? '' : 's' }} · {{ a.currency }}
+                  </p>
+                  <p v-if="a.currencyMismatch" class="text-xs text-mf-red-text">
+                    An account named "{{ a.name }}" already exists, in a different currency.
+                  </p>
                 </div>
                 <select
                   class="w-40 rounded-lg border border-mf-muted/60 bg-mf-bg px-2 py-1.5 text-sm outline-none focus:border-mf-green"
                   :value="accountMap[a.name] ?? ''"
                   @change="
                     ($event.target as HTMLSelectElement).value === '__new__'
-                      ? startNewAccount(a.name)
+                      ? startNewAccount(a)
                       : (accountMap = { ...accountMap, [a.name]: ($event.target as HTMLSelectElement).value })
                   "
                 >
                   <option value="" disabled>Choose…</option>
                   <option v-for="opt in taxonomy.activeAccounts" :key="opt.id" :value="opt.id">
-                    {{ opt.name }}
+                    {{ opt.name }} ({{ opt.currency }})
                   </option>
                   <option value="__new__">+ Create "{{ a.name }}"</option>
                 </select>
