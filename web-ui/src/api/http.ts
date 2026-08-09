@@ -67,29 +67,40 @@ const REQUEST_TIMEOUT_MS = 15_000
 /**
  * A human sentence for a status the server did not explain itself.
  *
- * Reached when the body is not this API's `{"error": …}` shape — which means
- * something in front of the app answered: a reverse proxy, a gateway, an auth
- * layer. Those are exactly the failures an operator most needs named, and
- * exactly the ones that used to surface as an empty string.
+ * Reaching this at all is the finding, not a fallback: moneyfly renders every
+ * error it produces through one central ErrorHandler as `{"error": …}` with a
+ * non-empty message, and logs every 4xx and 5xx as it does so. A response that
+ * carries a status but no such body therefore did not come from moneyfly —
+ * something in front of it answered, and the app's own log will have no line
+ * for that request at all.
+ *
+ * So these sentences say *that*, instead of guessing at an app-level cause.
+ * They used to guess, and the guesses were wrong in precisely the situation
+ * that gets here: a WAF ruleset refusing PUT outright (OWASP CRS blocks PUT
+ * and DELETE by default) read as "you are not an administrator", and a proxy
+ * refusing a request body over its inspection limit read as "your CSV is
+ * malformed". Both sent the operator into the app — the one layer where
+ * nothing was wrong — while the edge went unexamined.
  */
 function describeStatus(status: number): string {
+  const notUs = 'This did not come from moneyfly'
   switch (status) {
     case 400:
-      return 'The server rejected the request (400). If this was a file, it may not be the format this screen expects.'
+      return `Rejected with 400. ${notUs} — a proxy or WAF in front of it refused the request, often over a request-body size or inspection limit.`
     case 401:
-      return 'Not signed in (401).'
+      return `Rejected with 401. ${notUs} — an auth layer in front of it answered, not moneyfly's own session check.`
     case 403:
-      return 'Not allowed (403). This action needs an administrator account.'
+      return `Blocked with 403. ${notUs} — a proxy or WAF in front of it refused the request. WAF rulesets commonly block PUT and DELETE by default.`
     case 404:
-      return 'Not found (404). The server may be running an older version than this app.'
+      return `Not found (404). ${notUs} — either a proxy is not routing /api to the app, or the server is running an older version than this app.`
     case 413:
-      return 'Too large (413). A proxy in front of the app may be limiting the upload size.'
+      return "Too large (413). A proxy in front of the app is limiting the upload size — moneyfly's own limit is 32 MB."
     case 502:
     case 503:
     case 504:
       return `The server is unreachable behind its proxy (${status}).`
     default:
-      return `The server returned an error (${status}).`
+      return `The server returned ${status}. ${notUs} — check the proxy in front of it.`
   }
 }
 
