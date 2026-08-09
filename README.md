@@ -59,11 +59,23 @@ copy-paste ready.
 docker run -d --name moneyfly -p 5007:5007 -v moneyfly-config:/config ghcr.io/antlko/moneyfly:latest
 ```
 
+That is the whole thing — every setting is optional and the container writes its own defaults on
+first boot. Once you have a real domain in front of it, add the origin so OIDC and passkeys can be
+offered (see [Configuration](#configuration) for the rest):
+
+```bash
+docker run -d --name moneyfly -p 5007:5007 \
+  -v moneyfly-config:/config \
+  -e MONEYFLY_BASE_URL=https://money.example.com \
+  -e MONEYFLY_LOG_LEVEL=info \
+  ghcr.io/antlko/moneyfly:latest
+```
+
 ### Option B — Docker Compose
 
-Save this as `docker-compose.yml` and run `docker compose up -d`. Nothing below is required —
-[the copy in this repo](docker-compose.yml) is the same thing with every optional environment
-variable listed and annotated, including the one that turns on passkeys:
+Save this as `docker-compose.yml` and run `docker compose up -d`. It runs as-is; the commented
+lines are the settings worth knowing about, and [the copy in this repo](docker-compose.yml) is the
+same file with each one explained in full:
 
 ```yaml
 services:
@@ -75,6 +87,26 @@ services:
       - '5007:5007'
     volumes:
       - moneyfly-config:/config
+    environment:
+      # debug | info | warn | error. `info` already logs every rejected request
+      # with the reason; `debug` adds the successful ones too.
+      MONEYFLY_LOG_LEVEL: info
+
+      # Your real public origin. Required for OIDC and for passkeys, which bind
+      # credentials to this exact hostname — so set it to *your* domain before
+      # anyone registers a passkey, and leave it out entirely until you have one.
+      # (Pointing it at a domain you are not actually served from is worse than
+      # leaving it unset: passkey sign-in then fails on an origin mismatch.)
+      # MONEYFLY_BASE_URL: https://money.example.com
+
+      # Read on the first boot only, to decide whether the instance starts open.
+      # `closed` still lets you create your own first account, so a public
+      # instance comes up already claimed rather than open to whoever finds it.
+      # MONEYFLY_REGISTRATION: closed
+
+      # Recovery lever: promotes this account to admin on startup. Set it,
+      # restart once, then comment it out again.
+      # MONEYFLY_ADMIN_EMAIL: you@example.com
 
 volumes:
   moneyfly-config:
