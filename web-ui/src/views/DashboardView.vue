@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useEventListener } from '@vueuse/core'
-import { onMounted, ref, watch } from 'vue'
+import { defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import BalancePill from '@/components/monefy/BalancePill.vue'
@@ -9,11 +9,28 @@ import CategoryList from '@/components/monefy/CategoryList.vue'
 import MonefyHeader from '@/components/monefy/MonefyHeader.vue'
 import MonthCarousel from '@/components/monefy/MonthCarousel.vue'
 import RecordFabs from '@/components/monefy/RecordFabs.vue'
-import FilterDrawer from '@/components/monefy/FilterDrawer.vue'
-import MenuDrawer from '@/components/monefy/MenuDrawer.vue'
-import RecordsSheet from '@/components/monefy/RecordsSheet.vue'
 import SwipePager from '@/components/monefy/SwipePager.vue'
-import DesktopDashboardContent from '@/components/desktop/DesktopDashboardContent.vue'
+
+/*
+ * The four components that are never part of a first paint.
+ *
+ * This is the app's landing route, so the view itself stays eagerly imported —
+ * lazy-loading it would put a round trip in front of the one screen that has to
+ * be instant. Its component *graph* is a different question: the three overlays
+ * are behind `v-if` and appear only once someone opens them, and the desktop
+ * content is never rendered on a phone at all, yet all four were in the entry
+ * chunk that every phone downloads before it can show anything.
+ *
+ * Each is wrapped in a <Transition> at the call site, which is what makes this
+ * safe — the chunk resolves while the enter transition runs, and there is no
+ * fallback to flash because these mount over the screen rather than in it.
+ */
+const FilterDrawer = defineAsyncComponent(() => import('@/components/monefy/FilterDrawer.vue'))
+const MenuDrawer = defineAsyncComponent(() => import('@/components/monefy/MenuDrawer.vue'))
+const RecordsSheet = defineAsyncComponent(() => import('@/components/monefy/RecordsSheet.vue'))
+const DesktopDashboardContent = defineAsyncComponent(
+  () => import('@/components/desktop/DesktopDashboardContent.vue'),
+)
 import { useIsDesktop } from '@/lib/breakpoint'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'

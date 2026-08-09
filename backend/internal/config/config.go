@@ -18,6 +18,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +41,11 @@ const (
 	// dashboard, so an instance that fetches no rates is one that quietly
 	// under-reports what was spent.
 	DefaultFXEnabled = true
+	// MaxSessionTTLDays bounds session_ttl_days. Ten years is far past any
+	// sensible setting and well short of a typo'd 36500 that would make a
+	// session effectively permanent — an upper bound is worth as much as the
+	// lower one on a field that governs how long a stolen cookie stays good.
+	MaxSessionTTLDays = 3650
 )
 
 // FXProviders are the provider ids `fx.providers` accepts, in the order a fresh
@@ -50,21 +56,61 @@ const (
 // rates stopped updating a month ago.
 var FXProviders = []string{"open-er-api", "fawazahmed0"}
 
-// Config is the whole of config.yaml.
+// Config is the whole of config.yaml, plus the transport settings that come
+// from the environment rather than the file.
 type Config struct {
-	Server Server         `yaml:"server"`
-	App    App            `yaml:"app"`
-	Sync   Sync           `yaml:"sync"`
-	FX     FX             `yaml:"fx"`
-	OIDC   []OIDCProvider `yaml:"oidc"`
+	// LegacyServer is the `server:` block as pre-migration files still carry
+	// it. Nil — and so omitted from anything written — on every instance
+	// created after transport moved to the environment, which is what stops a
+	// fresh config.yaml growing the section back. See adoptLegacyServerBlock.
+	LegacyServer *legacyServer  `yaml:"server,omitempty"`
+	App          App            `yaml:"app"`
+	Sync         Sync           `yaml:"sync"`
+	FX           FX             `yaml:"fx"`
+	OIDC         []OIDCProvider `yaml:"oidc"`
+
+	// Server is `yaml:"-"` on purpose: transport is environment-only. See the
+	// Server doc below.
+	Server Server `yaml:"-"`
 }
 
-// Server holds HTTP transport settings.
+// Server holds HTTP transport settings. **Environment-only** —
+// MONEYFLY_ADDR and MONEYFLY_BASE_URL — and deliberately never written to
+// config.yaml.
+//
+// Every other field on Config has exactly one owner: the file, edited either by
+// hand or through the Settings screen. These two are the exception in the other
+// direction, and having them in both places was the problem. A running process
+// cannot rebind its own listen address, so `addr` in a file is a value that
+// looks editable and silently is not until the next restart; `base_url` is
+// deployment topology that belongs with the reverse proxy that terminates TLS,
+// not with the app's product settings. Splitting them out means no field
+// anywhere is settable from two places at once.
 type Server struct {
-	Addr string `yaml:"addr"`
+	Addr string
 	// BaseURL is the externally reachable origin (e.g. https://money.example.com).
 	// Required for OIDC, which must hand the provider an absolute redirect URI.
-	BaseURL string `yaml:"base_url"`
+	BaseURL string
+}
+
+// legacyServer is the `server:` section as older config.yaml files still carry
+// it, kept only so those instances keep working.
+//
+// Every install created before transport moved to the environment has this
+// block, and an operator running OIDC behind a proxy has a real `base_url` in
+// it. Dropping it would move their listener back to :5007 and fail their OIDC
+// startup on the base_url check — and dropping it *on the next save*, which is
+// what `yaml:"-"` alone would do, is worse still: the instance keeps working
+// until someone changes an unrelated setting, and breaks on the restart after
+// that, with no visible connection between the two.
+//
+// So it is honoured, warned about, and **written back unchanged** until the
+// matching environment variable supplies the value. Setting the variable is
+// what releases it: adoptLegacyServerBlock clears the field once the
+// environment owns it, and the next save is what finally removes the section.
+type legacyServer struct {
+	Addr    string `yaml:"addr,omitempty"`
+	BaseURL string `yaml:"base_url,omitempty"`
 }
 
 // App holds instance-wide product settings.
@@ -147,6 +193,14 @@ const (
 	RegistrationClosed = "closed"
 )
 
+// Environment variables this package reads. Named rather than inlined so the
+// deprecation warnings and the docs can point at the same strings.
+const (
+	envAddr         = "MONEYFLY_ADDR"
+	envBaseURL      = "MONEYFLY_BASE_URL"
+	envRegistration = "MONEYFLY_REGISTRATION"
+)
+
 // EnsureDir creates the config directory if it does not exist.
 func EnsureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -166,8 +220,12 @@ func DBPath(dir string) string { return filepath.Join(dir, "moneyfly.db") }
 // that full set of defaults is also written to config.yaml on the spot, so
 // the file an operator opens next always shows every field there is to
 // adjust, rather than the operator having to already know a field exists
-// before they can set it. Environment variables are applied after that write
-// and always win, so they are never what ends up baked into the file.
+// before they can set it.
+//
+// Ordering matters and is: parse → seed (first boot only) → normalize → save →
+// applyEnv. The save happens before applyEnv so a transport variable is never
+// what ends up baked into the file, and the seed happens before the save
+// precisely so it *is* — see seedFromEnv.
 func Load(dir string) (*Config, error) {
 	cfg := &Config{}
 	data, err := os.ReadFile(Path(dir))
@@ -183,6 +241,12 @@ func Load(dir string) (*Config, error) {
 		return nil, fmt.Errorf("read %s: %w", Path(dir), err)
 	}
 
+	if !existed {
+		cfg.seedFromEnv()
+	} else {
+		cfg.adoptLegacyServerBlock()
+	}
+
 	cfg.normalize()
 	if !existed {
 		if err := save(dir, cfg); err != nil {
@@ -194,6 +258,63 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// seedFromEnv supplies the initial value of a *settings* field from the
+// environment, on first boot only.
+//
+// MONEYFLY_REGISTRATION is the one field where this is needed. Registration is
+// a Settings-screen value, so it must have a single owner — the file — or
+// saving any unrelated setting silently bakes a transient environment value in,
+// and changing the dropdown reverts under the operator on the next read. But it
+// is also the only way to bring up a publicly reachable instance that is not
+// open to whoever finds it first: `closed` still permits the operator's own
+// first account (see registrationAllowed) and blocks everyone after.
+//
+// Seeding resolves both. The variable decides what a brand-new instance starts
+// as, is written into config.yaml like any other default, and is then never
+// consulted again — from that moment the file, and the Settings screen over it,
+// is the only owner.
+func (c *Config) seedFromEnv() {
+	if v := os.Getenv(envRegistration); v != "" {
+		c.App.Registration = v
+	}
+}
+
+// adoptLegacyServerBlock keeps pre-existing installs working after transport
+// moved to environment-only. See legacyServer.
+//
+// Called after the file has been unmarshalled (which is what populates
+// LegacyServer) and before applyServerEnv, so the environment still wins.
+func (c *Config) adoptLegacyServerBlock() {
+	if c.LegacyServer == nil {
+		return
+	}
+	// Whatever the environment supplies, it owns — drop that half of the block
+	// so the next save stops writing it. When the environment supplies both,
+	// the section disappears entirely and the migration is complete.
+	if os.Getenv(envAddr) != "" {
+		c.LegacyServer.Addr = ""
+	}
+	if os.Getenv(envBaseURL) != "" {
+		c.LegacyServer.BaseURL = ""
+	}
+
+	if c.LegacyServer.Addr != "" {
+		c.Server.Addr = c.LegacyServer.Addr
+		slog.Warn("config: server.addr in config.yaml is deprecated; set the environment "+
+			"variable instead, and this section will be removed on the next save",
+			"value", c.LegacyServer.Addr, "env", envAddr)
+	}
+	if c.LegacyServer.BaseURL != "" {
+		c.Server.BaseURL = c.LegacyServer.BaseURL
+		slog.Warn("config: server.base_url in config.yaml is deprecated; set the environment "+
+			"variable instead, and this section will be removed on the next save",
+			"value", c.LegacyServer.BaseURL, "env", envBaseURL)
+	}
+	if c.LegacyServer.Addr == "" && c.LegacyServer.BaseURL == "" {
+		c.LegacyServer = nil
+	}
 }
 
 // save marshals cfg as YAML and writes it to dir's config.yaml, whole. 0o600
@@ -256,6 +377,15 @@ func UpdateSettings(dir string, s Settings) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", Path(dir), err)
 	}
+	// Transport is resolved before validating, not after: `base_url` is
+	// required once any OIDC provider is configured, and it does not live in
+	// this file any more — so without this, saving an unrelated setting on an
+	// OIDC instance would fail on a field the operator cannot even see here.
+	// Safe this early only because Server is `yaml:"-"`; the OIDC half of the
+	// environment stays after the save, where it cannot be written.
+	cfg.adoptLegacyServerBlock()
+	cfg.applyServerEnv()
+
 	cfg.App, cfg.Sync, cfg.FX = s.App, s.Sync, s.FX
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -263,7 +393,7 @@ func UpdateSettings(dir string, s Settings) (*Config, error) {
 	if err := save(dir, cfg); err != nil {
 		return nil, err
 	}
-	cfg.applyEnv()
+	cfg.applyOIDCEnv()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -312,16 +442,37 @@ func (c *Config) normalize() {
 // applyEnv overlays environment variables. Secrets in particular are better kept
 // out of the file in container deployments, so every OIDC client secret can be
 // supplied as MONEYFLY_OIDC_<ID>_CLIENT_SECRET (id upper-cased, '-' → '_').
+//
+// Note what is *not* here: MONEYFLY_REGISTRATION. Registration is a Settings
+// field, and a field that both the Settings screen and the environment can set
+// has no single owner — the symptom was a dropdown that accepted a change,
+// reported "saved and applied", and showed the old value again, while the
+// environment's value was quietly written into config.yaml as a side effect of
+// saving something else entirely. It is a first-boot seed now instead; see
+// seedFromEnv.
 func (c *Config) applyEnv() {
-	if v := os.Getenv("MONEYFLY_ADDR"); v != "" {
+	c.applyServerEnv()
+	c.applyOIDCEnv()
+}
+
+// applyServerEnv fills the transport settings. Safe to call at any point,
+// including before a save, because Server is `yaml:"-"` and so cannot be
+// written to the file no matter what it holds — which is exactly why the
+// settings write path can afford to resolve it early enough to validate
+// against.
+func (c *Config) applyServerEnv() {
+	if v := os.Getenv(envAddr); v != "" {
 		c.Server.Addr = v
 	}
-	if v := os.Getenv("MONEYFLY_BASE_URL"); v != "" {
+	if v := os.Getenv(envBaseURL); v != "" {
 		c.Server.BaseURL = v
 	}
-	if v := os.Getenv("MONEYFLY_REGISTRATION"); v != "" {
-		c.App.Registration = v
-	}
+}
+
+// applyOIDCEnv fills provider credentials. Unlike applyServerEnv this must
+// never run before a save: the oidc section *is* marshalled, so an env-supplied
+// client secret applied too early would be written straight into config.yaml.
+func (c *Config) applyOIDCEnv() {
 	for i := range c.OIDC {
 		p := &c.OIDC[i]
 		key := "MONEYFLY_OIDC_" + strings.ToUpper(strings.ReplaceAll(p.ID, "-", "_"))
@@ -345,6 +496,17 @@ func (c *Config) Validate() error {
 	}
 	if len(c.App.DefaultCurrency) != 3 {
 		return fmt.Errorf("app.default_currency: want a 3-letter code, got %q", c.App.DefaultCurrency)
+	}
+	// Session lifetime is a security boundary, and this is a settable field —
+	// the browser's own min="1" is not a check, it is a hint. A zero or negative
+	// value here becomes a zero-or-past session expiry at startSession, i.e. an
+	// instance nobody can stay signed in to.
+	if c.App.SessionTTLDays < 1 {
+		return fmt.Errorf("app.session_ttl_days: want >= 1, got %d", c.App.SessionTTLDays)
+	}
+	if c.App.SessionTTLDays > MaxSessionTTLDays {
+		return fmt.Errorf("app.session_ttl_days: want <= %d, got %d",
+			MaxSessionTTLDays, c.App.SessionTTLDays)
 	}
 	if c.Sync.ChangeLogRetentionDays < 1 {
 		return fmt.Errorf("sync.change_log_retention_days: want >= 1, got %d", c.Sync.ChangeLogRetentionDays)

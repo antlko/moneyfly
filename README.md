@@ -215,10 +215,14 @@ and `oidc` are file-or-environment only and need a restart. Every field is docum
 | `MONEYFLY_CONFIG_DIR` | `/config` | Where `config.yaml`, the database and exports live. |
 | `MONEYFLY_ADDR` | `:5007` | Listen address (`host:port`). |
 | `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin. Required once an OIDC provider is configured. |
-| `MONEYFLY_REGISTRATION` | `open` | `open` — anyone who can reach the instance may sign up. `closed` — set this once you've created your account. |
+| `MONEYFLY_REGISTRATION` | `open` | Sets registration **on first boot only**, then `config.yaml` owns it (change it later under Settings → Instance). `closed` still allows your own first account, so setting it here is how a public instance comes up already locked down. |
 | `MONEYFLY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
 
-Command-line flags mirror the directory and address settings: `--config-dir` and `--addr`.
+The listen address and public origin come from the environment only — they are not fields in
+`config.yaml`, so nothing is settable from two places at once. Everything under `app`, `sync` and
+`fx` is editable live in the app under **Settings → Instance**.
+
+There is one command-line flag, `--config-dir`, which overrides `MONEYFLY_CONFIG_DIR`.
 
 ## How it works
 

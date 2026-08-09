@@ -13,8 +13,9 @@ import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
 import RecurringSheet from '@/components/monefy/RecurringSheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
-import { clampDecimals, display, initialState, press, total, typed, type Key } from '@/lib/calculator'
+import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
+import { useClampOnCurrencyChange } from '@/lib/currencyClamp'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { nextOccurrence, today, type RecurringFreq } from '@/lib/period'
 import { db } from '@/db'
@@ -124,6 +125,17 @@ const account = computed(() => {
 })
 
 const currency = computed(() => String(account.value?.currency ?? dashboard.baseCurrency))
+
+/*
+ * A part-typed amount is re-normalised when the currency changes rather than
+ * cleared — clearing is what used to throw away whatever had been typed. Saying
+ * so out loud matters when the clamp reaches zero (0.99 in HUF), because a
+ * disabled confirm button otherwise looks exactly like that old bug.
+ */
+useClampOnCurrencyChange(currency, calc, ({ before, after, currency: code }) => {
+  toast(`${code} has no minor unit — ${before} rounded to ${after}`)
+})
+
 const amount = computed(() => display(calc.value))
 const hasAmount = computed(() => total(calc.value) > 0)
 
@@ -187,11 +199,10 @@ function pickFreq(freq: RecurringFreq) {
 function pickAccount(next: Row) {
   showAccounts.value = false
   accountId.value = String(next.id)
-  // The new currency may allow fewer decimals than the old one (EUR to HUF), so
-  // a part-typed amount has to be re-normalised rather than left with a
-  // fraction the currency cannot express — not cleared outright, which used to
-  // throw away whatever amount was already typed.
-  calc.value = clampDecimals(calc.value, exponent(currency.value))
+  // Re-normalising the typed amount for the new currency is `currency`'s own
+  // watcher, not this handler's job — `account` also moves when the Dexie
+  // liveQuery behind `activeAccounts` resolves or a background sync changes the
+  // remembered account, neither of which comes through here.
 }
 
 async function record(category: Row) {

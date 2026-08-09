@@ -157,6 +157,35 @@ describe('clampDecimals', () => {
   it('drops a trailing dot with no fractional digits too', () => {
     expect(display(clampDecimals(type('1 2 .', 2), 0))).toBe('12')
   })
+
+  it('returns the same object when there is nothing to clamp', () => {
+    // The currency watcher uses identity to decide whether to tell the user
+    // anything, so a no-op clamp must not allocate a new state.
+    const state = type('1 2')
+    expect(clampDecimals(state, 2)).toBe(state)
+  })
+
+  // A pending left-hand side is saved through the same toMinor as the entry,
+  // so leaving it at full precision means `12.34 + 5` switched to HUF shows a
+  // total of 17.34 and silently writes 17.
+  it('clamps a pending accumulator, not just the entry', () => {
+    const pending = type('1 2 . 3 4 + 5', 2)
+    expect(total(pending)).toBe(17.34)
+
+    const clamped = clampDecimals(pending, 0)
+    expect(clamped.accumulator).toBe(12)
+    expect(total(clamped)).toBe(17)
+  })
+
+  it('rounds the accumulator rather than truncating it', () => {
+    // 12.36 -> 12.4 at one decimal, matching toMinor's half-away-from-zero.
+    const clamped = clampDecimals(type('1 2 . 3 6 + 1', 2), 1)
+    expect(clamped.accumulator).toBe(12.4)
+  })
+
+  it('leaves an absent accumulator absent', () => {
+    expect(clampDecimals(type('1 2 . 3 4', 2), 0).accumulator).toBeNull()
+  })
 })
 
 describe('typed', () => {

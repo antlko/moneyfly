@@ -20,6 +20,21 @@ type settingsDTO struct {
 	FXEnabled              bool     `json:"fxEnabled"`
 	FXRefreshAt            string   `json:"fxRefreshAt"`
 	FXProviders            []string `json:"fxProviders"`
+
+	// FXProvidersAvailable is the set fx.providers accepts, response-only —
+	// toSettings ignores it, so a client cannot widen what Validate allows by
+	// sending it back.
+	//
+	// Served rather than duplicated in the frontend because a hardcoded copy
+	// there does not merely go stale: the Settings screen rebuilds the saved
+	// list from its own constant, so a provider this build does not know about
+	// is silently deleted from config.yaml the next time anyone saves anything.
+	// This costs no round trip — the screen already fetches this endpoint.
+	FXProvidersAvailable []string `json:"fxProvidersAvailable"`
+
+	// SessionTTLDaysMax is the upper bound Validate enforces, so the form can
+	// show the same limit rather than guessing at one.
+	SessionTTLDaysMax int `json:"sessionTtlDaysMax"`
 }
 
 func toSettingsDTO(s config.Settings) settingsDTO {
@@ -31,6 +46,8 @@ func toSettingsDTO(s config.Settings) settingsDTO {
 		FXEnabled:              s.FX.On(),
 		FXRefreshAt:            s.FX.RefreshAt,
 		FXProviders:            s.FX.Providers,
+		FXProvidersAvailable:   config.FXProviders,
+		SessionTTLDaysMax:      config.MaxSessionTTLDays,
 	}
 }
 

@@ -63,6 +63,25 @@ export function toMinor(major: number, currency: string): number {
   return Math.sign(major) * Math.round(shifted)
 }
 
+/**
+ * Round a major-unit figure to `decimals`, by the same rule as `toMinor`.
+ *
+ * Anything that shortens an amount to fit a currency has to round the way the
+ * amount will eventually be *saved*, or the number on screen and the number in
+ * the database disagree. `toFixed` is the obvious tool and the wrong one: it
+ * rounds on the binary value, so 1.2345 at three decimals gives 1.234 while
+ * `toMinor` gives 1.235. Going through `shiftDecimal` — the same
+ * `toExponential` trick `toMinor` uses to sidestep float representation error —
+ * is what keeps the two answers identical.
+ *
+ * Currency-agnostic on purpose: the calculator takes a decimal count, not a
+ * currency code, so this can serve both callers.
+ */
+export function roundToDecimals(value: number, decimals: number): number {
+  const rounded = Math.round(shiftDecimal(Math.abs(value), decimals))
+  return Math.sign(value) * shiftDecimal(rounded, -decimals)
+}
+
 /** 1440 EUR → 14.4. Lossy by design — only for display and charts. */
 export function toMajor(minor: number, currency: string): number {
   return minor / 10 ** exponent(currency)

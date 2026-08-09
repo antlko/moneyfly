@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"moneyfly/internal/db"
+	"moneyfly/internal/importer"
 	syncproto "moneyfly/internal/sync"
 )
 
@@ -297,6 +299,268 @@ func TestImportCommitChunksBatchesOverOpLimit(t *testing.T) {
 	}
 	if txns != rows {
 		t.Fatalf("got %d transactions stored, want %d", txns, rows)
+	}
+}
+
+// Chunking trades one atomic transaction for N independent ones, so a failure
+// part way through leaves the earlier chunks committed. What must never happen
+// is reporting that as a total failure: the rows are in the database either
+// way, and the operator needs to know how many before deciding what to do.
+func TestApplyInChunksReportsWhatLandedBeforeFailing(t *testing.T) {
+	ops := make([]syncproto.Op, syncproto.MaxOpsPerPush*2+10)
+
+	var calls int
+	accepted, lastSeq, err := applyInChunks(func(chunk []syncproto.Op) (db.ApplyResult, error) {
+		calls++
+		if calls == 2 {
+			return db.ApplyResult{}, fmt.Errorf("disk full")
+		}
+		return db.ApplyResult{Accepted: len(chunk), ServerSeq: int64(calls)}, nil
+	}, ops)
+
+	if err == nil {
+		t.Fatal("err = nil, want the chunk failure surfaced")
+	}
+	if accepted != syncproto.MaxOpsPerPush {
+		t.Errorf("accepted = %d, want %d — the first chunk committed and must be reported",
+			accepted, syncproto.MaxOpsPerPush)
+	}
+	if lastSeq != 1 {
+		t.Errorf("lastSeq = %d, want 1 (the last chunk that actually applied)", lastSeq)
+	}
+	if calls != 2 {
+		t.Errorf("apply called %d times, want 2 — it must stop at the failure", calls)
+	}
+}
+
+func TestApplyInChunksSplitsOnTheOpLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		ops        int
+		wantChunks int
+	}{
+		{"empty", 0, 0},
+		{"one", 1, 1},
+		{"exactly the limit", syncproto.MaxOpsPerPush, 1},
+		{"one over", syncproto.MaxOpsPerPush + 1, 2},
+		{"the 1491-row incident", 1491, 2},
+		{"several times over", syncproto.MaxOpsPerPush*3 + 7, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var chunks int
+			accepted, _, err := applyInChunks(func(chunk []syncproto.Op) (db.ApplyResult, error) {
+				chunks++
+				if len(chunk) > syncproto.MaxOpsPerPush {
+					t.Errorf("chunk of %d exceeds the %d op limit", len(chunk), syncproto.MaxOpsPerPush)
+				}
+				return db.ApplyResult{Accepted: len(chunk)}, nil
+			}, make([]syncproto.Op, tc.ops))
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if chunks != tc.wantChunks {
+				t.Errorf("chunks = %d, want %d", chunks, tc.wantChunks)
+			}
+			if accepted != tc.ops {
+				t.Errorf("accepted = %d, want %d", accepted, tc.ops)
+			}
+		})
+	}
+}
+
+// An ordinary import must not start advertising a failure field.
+func TestImportCommitReportsNoFailureOnASuccessfulImport(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedCategory(t, s, userID, "cat:food", "Food", "expense")
+	seedAccount(t, s, userID, "acc:cash", "Cash", "EUR")
+
+	csv := importHeader + "19.07.2021,Cash,Food,-10,EUR,-10,EUR,\n"
+	commit := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, nil, nil), cookie))
+
+	if commit.Failed != 0 || commit.FailureReason != "" {
+		t.Errorf("failed = %d, reason = %q on a clean import, want 0 and empty",
+			commit.Failed, commit.FailureReason)
+	}
+}
+
+// One account name in two currencies is two wallets, and the preview has to
+// say so — grouping by name alone reported one resolved entry where the commit
+// found two, and the second currency's rows were dropped as unresolved after
+// the operator had been told the file was clean.
+func TestPreviewSplitsOneAccountNameAcrossCurrencies(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedCategory(t, s, userID, "cat:food", "Food", "expense")
+	seedAccount(t, s, userID, "acc:cash", "Cash", "EUR")
+
+	csv := importHeader +
+		"19.07.2021,Cash,Food,-10,EUR,-10,EUR,\n" +
+		"20.07.2021,Cash,Food,-1000,HUF,-3,EUR,\n"
+
+	preview := decodeBody[importPreviewResponse](t, s.do(t, "POST",
+		"/api/import/monefy/preview", previewBody(t, csv), cookie))
+
+	if len(preview.Accounts) != 2 {
+		t.Fatalf("got %d account entries, want 2 (Cash/EUR and Cash/HUF): %+v",
+			len(preview.Accounts), preview.Accounts)
+	}
+	byKey := map[string]nameStatusDTO{}
+	for _, a := range preview.Accounts {
+		byKey[a.Key] = a
+	}
+	eur, ok := byKey[importer.AccountKey("Cash", "EUR")]
+	if !ok || !eur.Resolved {
+		t.Errorf("EUR Cash should resolve to the seeded account: %+v", eur)
+	}
+	huf, ok := byKey[importer.AccountKey("Cash", "HUF")]
+	if !ok {
+		t.Fatalf("no entry for Cash in HUF: %+v", preview.Accounts)
+	}
+	if huf.Resolved {
+		t.Error("HUF Cash resolved against a EUR account")
+	}
+	if !huf.CurrencyMismatch {
+		t.Error("HUF Cash should report currencyMismatch — the name exists, the currency does not")
+	}
+}
+
+// Mapping each currency separately must send each currency's rows to its own
+// account.
+func TestCommitMapsEachCurrencyIndependently(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedCategory(t, s, userID, "cat:food", "Food", "expense")
+	seedAccount(t, s, userID, "acc:eur", "Cash", "EUR")
+	seedAccount(t, s, userID, "acc:huf", "Cash HUF", "HUF")
+
+	csv := importHeader +
+		"19.07.2021,Cash,Food,-10,EUR,-10,EUR,\n" +
+		"20.07.2021,Cash,Food,-1000,HUF,-3,EUR,\n"
+	accountMap := map[string]string{importer.AccountKey("Cash", "HUF"): "acc:huf"}
+
+	commit := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, nil, accountMap), cookie))
+	if commit.Imported != 2 {
+		t.Fatalf("imported = %d, want 2: %+v", commit.Imported, commit)
+	}
+
+	snap := decodeBody[snapshotResponse](t, s.do(t, "GET", "/api/sync/snapshot", "", cookie))
+	got := map[string]string{} // currency -> accountId
+	for _, row := range snap.Rows {
+		if row.Entity != "txn" {
+			continue
+		}
+		var body struct {
+			Currency  string `json:"currency"`
+			AccountID string `json:"accountId"`
+		}
+		if err := json.Unmarshal(row.Data, &body); err != nil {
+			t.Fatalf("unmarshal txn: %v", err)
+		}
+		got[body.Currency] = body.AccountID
+	}
+	if got["EUR"] != "acc:eur" {
+		t.Errorf("EUR row landed in %q, want acc:eur", got["EUR"])
+	}
+	if got["HUF"] != "acc:huf" {
+		t.Errorf("HUF row landed in %q, want acc:huf", got["HUF"])
+	}
+}
+
+// The same name used as both an expense and an income category is two
+// categories, and mapping one must not map the other.
+func TestPreviewSplitsOneCategoryNameAcrossKinds(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedAccount(t, s, userID, "acc:cash", "Cash", "EUR")
+
+	csv := importHeader +
+		"19.07.2021,Cash,Gifts,-10,EUR,-10,EUR,\n" +
+		"20.07.2021,Cash,Gifts,25,EUR,25,EUR,\n"
+
+	preview := decodeBody[importPreviewResponse](t, s.do(t, "POST",
+		"/api/import/monefy/preview", previewBody(t, csv), cookie))
+
+	if len(preview.Categories) != 2 {
+		t.Fatalf("got %d category entries, want 2 (expense and income Gifts): %+v",
+			len(preview.Categories), preview.Categories)
+	}
+	keys := map[string]bool{}
+	for _, c := range preview.Categories {
+		if c.Key == "" {
+			t.Errorf("category entry has no key: %+v", c)
+		}
+		keys[c.Key] = true
+	}
+	for _, want := range []string{
+		importer.CategoryKey("Gifts", "expense"),
+		importer.CategoryKey("Gifts", "income"),
+	} {
+		if !keys[want] {
+			t.Errorf("missing key %q; mapping one kind would silently map the other", want)
+		}
+	}
+}
+
+// Every currency in the file is reported, so the screen can offer to declare
+// the ones with no rate rather than letting those rows import and then sit
+// outside every total with nothing to explain why.
+func TestPreviewReportsEveryDistinctCurrency(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+
+	csv := importHeader +
+		"19.07.2021,Cash,Food,-10,EUR,-10,EUR,\n" +
+		"20.07.2021,Cash,Food,-1000,HUF,-3,EUR,\n" +
+		"21.07.2021,Cash,Food,-65,UAH,-2,EUR,\n" +
+		"22.07.2021,Cash,Food,-20,EUR,-20,EUR,\n"
+
+	preview := decodeBody[importPreviewResponse](t, s.do(t, "POST",
+		"/api/import/monefy/preview", previewBody(t, csv), cookie))
+
+	want := []currencyCountDTO{{"EUR", 2}, {"HUF", 1}, {"UAH", 1}}
+	if len(preview.Currencies) != len(want) {
+		t.Fatalf("got %+v, want %+v", preview.Currencies, want)
+	}
+	for i, w := range want {
+		if preview.Currencies[i] != w {
+			t.Errorf("currencies[%d] = %+v, want %+v (order of first appearance)",
+				i, preview.Currencies[i], w)
+		}
+	}
+}
+
+// Group counts have to cover every row exactly once, or the screen's "N rows
+// will be skipped" is wrong in whichever direction the double-count falls.
+func TestPreviewGroupsCountEveryRowExactlyOnce(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+
+	csv := importHeader +
+		"19.07.2021,Cash,Food,-10,EUR,-10,EUR,\n" +
+		"20.07.2021,Cash,Food,-20,EUR,-20,EUR,\n" +
+		"21.07.2021,Bank,Food,-30,EUR,-30,EUR,\n" +
+		"22.07.2021,Cash,Bills,-40,EUR,-40,EUR,\n"
+
+	preview := decodeBody[importPreviewResponse](t, s.do(t, "POST",
+		"/api/import/monefy/preview", previewBody(t, csv), cookie))
+
+	var total int
+	for _, g := range preview.Groups {
+		total += g.Count
+	}
+	if total != preview.TotalRows {
+		t.Errorf("group counts sum to %d, want totalRows %d", total, preview.TotalRows)
+	}
+	if len(preview.Groups) != 3 {
+		t.Errorf("got %d groups, want 3 distinct (category, account) pairs: %+v",
+			len(preview.Groups), preview.Groups)
 	}
 }
 

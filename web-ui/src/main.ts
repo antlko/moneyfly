@@ -6,7 +6,21 @@ import App from './App.vue'
 import './assets/tailwind.css'
 import router from './router'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
+/*
+ * Mount only once the router has resolved its first route.
+ *
+ * `mount` replaces everything inside #app, which includes the inline boot
+ * splash in index.html — and `RouterView` renders nothing until the initial
+ * navigation completes, guard included. Mounting eagerly therefore swaps a
+ * visible splash for a blank page for exactly as long as the guard takes.
+ * Waiting for `isReady()` keeps the splash on screen until there is a real
+ * screen to put in its place.
+ *
+ * The guard itself no longer waits on the network (see stores/auth.ts), so this
+ * is a frame or two on a warm start, not a stall.
+ */
+const app = createApp(App).use(createPinia()).use(router)
+router.isReady().finally(() => app.mount('#app'))
 
 /*
  * Register the shell cache.
@@ -20,7 +34,36 @@ createApp(App).use(createPinia()).use(router).mount('#app')
  * data — the server has everything and the device re-bootstraps — but it does
  * cost the *unsent* queue, which is the one thing that exists nowhere else.
  */
-const updateSW = registerSW({ immediate: true })
+/*
+ * …but not while the app is still trying to paint.
+ *
+ * The precache is ~520 KiB across 41 entries, and `immediate` kicks all of it
+ * off inside the first-paint window, competing with the entry chunk for the
+ * same connection. Deferring to idle (or `load`, where that is not available)
+ * moves the fetches, not the coverage: the same files are cached, a beat later,
+ * and offline support is identical.
+ *
+ * Deliberately *not* narrowing the precache to shrink it — that is the obvious
+ * alternative and the wrong one. Every lazily-loaded route is in there on
+ * purpose, and dropping them would mean /transfer or /import failing to open in
+ * a tunnel, on an app whose whole promise is that it works there.
+ */
+function whenIdle(fn: () => void): void {
+  // Typed as optional deliberately: the DOM lib declares requestIdleCallback
+  // unconditionally, so a plain `in` check narrows the fallback branch to
+  // `never` and stops compiling — while Safari before 17, very much a target
+  // here, does not have it.
+  const { requestIdleCallback } = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+  }
+  if (requestIdleCallback) requestIdleCallback(fn, { timeout: 3000 })
+  else window.addEventListener('load', fn, { once: true })
+}
+
+let updateSW: ReturnType<typeof registerSW> | undefined
+whenIdle(() => {
+  updateSW = registerSW({ immediate: true })
+})
 void navigator.storage?.persist?.()
 
 /*

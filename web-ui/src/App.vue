@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterView, useRoute } from 'vue-router'
+import { computed, watch } from 'vue'
+import { RouterView, useRoute, useRouter } from 'vue-router'
 import { Toaster } from 'vue-sonner'
 import 'vue-sonner/style.css'
 
@@ -24,6 +24,30 @@ const route = useRoute()
 // gets the plain mobile-style frame regardless of width, the same shell a
 // phone would show it in.
 const showDesktopShell = computed(() => isDesktop.value && auth.isSignedIn && !route.meta.public)
+
+/*
+ * Leave a protected screen the moment the session actually ends.
+ *
+ * The router guard only runs on navigation, which was enough while the session
+ * was always resolved *before* the first screen rendered. It is not any more:
+ * `auth.bootstrap()` now renders from the cached profile and checks with the
+ * server afterwards, so a session that turns out to be revoked clears while the
+ * user is already looking at a screen. Without this they would sit on it —
+ * signed out, still reading their ledger — until they happened to navigate.
+ *
+ * Only a real 401 gets this far (see stores/auth.ts): being unreachable leaves
+ * the cached profile in place, which is the whole point of the offline
+ * fallback, and must not bounce anyone to a sign-in form they cannot complete.
+ */
+const router = useRouter()
+watch(
+  () => auth.isSignedIn,
+  (signedIn) => {
+    if (!signedIn && auth.ready && !route.meta.public) {
+      void router.replace({ name: 'signin', query: { next: route.fullPath } })
+    }
+  },
+)
 </script>
 
 <template>

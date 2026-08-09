@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  # backend/internal/web/dist/index.html is a tracked placeholder, there only so
+  # `//go:embed all:dist` compiles in a fresh checkout. Committing a real build
+  # over it is silently broken: `make build` and the Dockerfile both `rm -rf` the
+  # directory first, so releases look fine, while `make dev-api` and a bare
+  # `go build` serve an index.html whose hashed asset references 404 — a blank
+  # app with nothing in the logs. That happened once; this is the guard.
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: dist/index.html is still the placeholder
+        run: |
+          if grep -q 'assets/' backend/internal/web/dist/index.html; then
+            echo "backend/internal/web/dist/index.html references built assets."
+            echo "It must stay the placeholder — restore it with:"
+            echo "  git checkout \$(git log --diff-filter=A --format=%H -- backend/internal/web/dist/index.html | tail -1) -- backend/internal/web/dist/index.html"
+            exit 1
+          fi
+
   backend:
     runs-on: ubuntu-latest
     defaults:

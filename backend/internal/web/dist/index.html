@@ -1,60 +1,15 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-
-    <!--
-      viewport-fit=cover lets the app paint under the iPhone home indicator; the
-      two round record buttons then sit on env(safe-area-inset-bottom) padding
-      rather than being pushed up by a white bar.
-
-      `interactive-widget=resizes-content` keeps the on-screen keyboard from
-      sliding the whole fixed shell up out of view; browsers that do not know it
-      ignore it.
-
-      `maximum-scale=1, user-scalable=no` is what stops pinch/double-tap zoom,
-      in a browser tab and installed alike — not a CSS `touch-action` rule.
-      `touch-action` was tried first and taken back out: declaring a panning
-      value on `html` at all (even just to block pinch-zoom) puts WebKit's
-      gesture recognizer in a state where the *next tap anywhere in the app*,
-      right after any swipe, gets consumed as "stop the pan" instead of
-      delivered as a click — which read as every button needing two taps
-      immediately after paging the month carousel. The viewport meta reaches
-      the same goal without touching touch gesture recognition at all.
-    -->
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
-    />
-    <meta name="theme-color" content="#7ec89f" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!--
-      `black-translucent`, not `default`. It is the only value that lets the page
-      paint *under* the status bar — and it is also what makes
-      env(safe-area-inset-top) report a real number at all. With `default`, iOS
-      keeps the status bar on an opaque strip of its own above the web view, the
-      inset is 0, the header's `pt-safe-t` pads nothing, and the app sits in a
-      box below the clock looking like a web page in a frame instead of like an
-      app. The header is green with white text already, so the status bar's white
-      glyphs land on the colour they were meant for.
-    -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="moneyfly" />
+    <meta charset="utf-8" />
     <title>moneyfly</title>
-    <script type="module" crossorigin src="/assets/index-CJmjSYug.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/useApi-CROJJdhE-DZD9jX-r.js">
-    <link rel="modulepreload" crossorigin href="/assets/http-DRn52c0G.js">
-    <link rel="modulepreload" crossorigin href="/assets/engine-K2hhaiAN.js">
-    <link rel="modulepreload" crossorigin href="/assets/chevron-left-CGSe515g.js">
-    <link rel="modulepreload" crossorigin href="/assets/live-DrrtcJT4.js">
-    <link rel="modulepreload" crossorigin href="/assets/taxonomy-BwjeAN6H.js">
-    <link rel="modulepreload" crossorigin href="/assets/auth-Bv6S-H7z.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-BaElDfEE.css">
   </head>
   <body>
-    <div id="app"></div>
+    <!--
+      Placeholder so `//go:embed all:dist` compiles in a checkout without a
+      built frontend. `make build` and the Dockerfile replace this whole
+      directory with the real SPA before compiling the release binary.
+    -->
+    <p>Web UI not built. Run <code>make build</code>, or use the dev servers.</p>
   </body>
 </html>

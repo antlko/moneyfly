@@ -90,6 +90,66 @@ func snapshotByEntity(t *testing.T, s *Server, userID, entity string) []syncprot
 	return out
 }
 
+// What actually keeps the recurring worker safe from db.ApplyOps' batch limit
+// is that one tick can never build a batch that large: maxCatchUpPerTick bounds
+// the occurrences, plus one op for the rule's own advance.
+//
+// Nothing enforces that ordering but arithmetic, and the two constants live in
+// different packages for unrelated reasons. Raise the catch-up cap past the op
+// limit and a long-dormant rule 500s on every tick forever, advancing nothing,
+// visible only as a log line. This is the guard on that.
+func TestCatchUpCapStaysUnderTheOpLimit(t *testing.T) {
+	const opsPerTick = maxCatchUpPerTick + 1 // occurrences + the rule advance
+	if opsPerTick > syncproto.MaxOpsPerPush {
+		t.Fatalf("one tick can build %d ops but ApplyOps takes at most %d — "+
+			"a catching-up rule would be rejected wholesale and wedge itself",
+			opsPerTick, syncproto.MaxOpsPerPush)
+	}
+}
+
+// A rule dormant for years materialises up to the per-tick cap and, crucially,
+// still advances — so the next tick makes progress rather than redoing the same
+// work. Restoring an old backup is the ordinary way to land here.
+func TestMaterialiseDueAdvancesThroughALongCatchUp(t *testing.T) {
+	s := newTestServer(t, "")
+	user, err := s.conn().CreateUser("catchup@example.com", "hash", "A", "EUR")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Far enough back that the catch-up saturates the per-tick cap.
+	if _, err := s.conn().ApplyOps(user.ID, []syncproto.Op{
+		ruleOp("rule-long", "daily", "2094-01-01", 1),
+	}); err != nil {
+		t.Fatalf("seed rule: %v", err)
+	}
+
+	s.materialiseDue(testToday)
+
+	txns := snapshotByEntity(t, s, user.ID, "txn")
+	if len(txns) != maxCatchUpPerTick {
+		t.Fatalf("got %d transactions, want the per-tick cap of %d",
+			len(txns), maxCatchUpPerTick)
+	}
+
+	rules := snapshotByEntity(t, s, user.ID, "recurring_rule")
+	if len(rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(rules))
+	}
+	var body struct {
+		NextOn string `json:"nextOn"`
+	}
+	if err := json.Unmarshal(rules[0].Data, &body); err != nil {
+		t.Fatalf("unmarshal rule: %v", err)
+	}
+	// Not past today — the cap stopped it early — but it must have moved, or
+	// the rule re-materialises the identical batch forever.
+	if body.NextOn <= "2094-01-01" {
+		t.Errorf("nextOn = %q, want advanced past the starting date — a rule "+
+			"that does not advance repeats the same catch-up on every tick", body.NextOn)
+	}
+}
+
 // A rule several days behind must produce one transaction per missed day, not
 // just the most recent one — the server being briefly unreachable must not
 // quietly drop days from the ledger.

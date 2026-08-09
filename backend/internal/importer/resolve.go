@@ -53,6 +53,36 @@ type Resolution struct {
 
 func (r Resolution) Resolved() bool { return r.ID != "" }
 
+// CategoryKey and AccountKey are how a CSV name is identified in the mapping
+// the client sends back.
+//
+// A bare name is not an identity. One export can use "Gifts" as both an expense
+// and an income category, and one account name can appear in two currencies —
+// each of those is two distinct things that resolve against different existing
+// rows, and a name-keyed map cannot tell them apart. Mapping one then silently
+// mapped the other, onto a category of the wrong kind or an account in the
+// wrong currency: rows written to the wrong place rather than skipped, which is
+// the failure the import is otherwise careful to avoid.
+//
+// The scoping half — kind for categories, currency for accounts — matches what
+// the resolvers below already use to *match*, so preview and commit agree by
+// construction.
+func CategoryKey(name, kind string) string { return kind + ":" + name }
+
+func AccountKey(name, currency string) string { return currency + ":" + name }
+
+// override looks up the composite key first and falls back to the bare name,
+// so a caller written against the older name-keyed shape keeps working.
+func override(overrides map[string]string, key, name string) string {
+	if id, ok := overrides[key]; ok && id != "" {
+		return id
+	}
+	if id, ok := overrides[name]; ok && id != "" {
+		return id
+	}
+	return ""
+}
+
 // ResolveCategory finds the existing category id a CSV category name refers
 // to, scoped to kind so an expense row can never match an income category of
 // the same name. Checked in order: an explicit override (the operator's own
@@ -60,7 +90,7 @@ func (r Resolution) Resolved() bool { return r.ID != "" }
 // then the small alias table above. It never creates a category — see the
 // package doc for why an unmatched name blocks instead.
 func ResolveCategory(name, kind string, existing []NamedRow, overrides map[string]string) Resolution {
-	if id, ok := overrides[name]; ok && id != "" {
+	if id := override(overrides, CategoryKey(name, kind), name); id != "" {
 		return Resolution{Name: name, ID: id}
 	}
 	norm := normalize(name)
@@ -91,7 +121,7 @@ func ResolveCategory(name, kind string, existing []NamedRow, overrides map[strin
 // override always wins regardless of currency — that is the operator seeing
 // the mismatch and choosing anyway.
 func ResolveAccount(name, currency string, existing []NamedRow, overrides map[string]string) Resolution {
-	if id, ok := overrides[name]; ok && id != "" {
+	if id := override(overrides, AccountKey(name, currency), name); id != "" {
 		return Resolution{Name: name, ID: id}
 	}
 	norm := normalize(name)

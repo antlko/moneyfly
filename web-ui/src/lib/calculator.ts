@@ -11,6 +11,8 @@
  * a currency with no minor unit) is a test rather than a thing to click through.
  */
 
+import { roundToDecimals } from './money'
+
 export type Operator = '+' | '-' | '*' | '/'
 /** Spelled out rather than `${number}`, which would also admit '42'. */
 export type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
@@ -188,15 +190,27 @@ export const display = (state: CalcState): string => state.entry
  * `pressDigit` already refuses a digit that would not survive the round trip
  * to minor units; this applies the same rule retroactively to whatever was
  * typed under the *previous* currency's limit, e.g. 12.34 EUR becoming 12
- * when the account is switched to HUF (0 decimals). It only ever shortens
- * `entry` — `accumulator`/`operator` are left alone, since a pending
- * mid-expression amount is still a plain number until `=` folds it in, and
- * `toMinor` rounds to the target currency's exponent at that point anyway.
+ * when the account is switched to HUF (0 decimals).
+ *
+ * `accumulator` is clamped too, and that is not optional. Leaving it alone —
+ * on the theory that a pending amount is still a plain number and `toMinor`
+ * will round at the end anyway — means `12.34 + 5` switched to HUF keeps a
+ * total of 17.34 on a currency that cannot express it, and silently saves 17.
+ * The displayed figure and the saved figure have to agree, so both halves of
+ * a pending expression are clamped at the same moment.
  */
 export function clampDecimals(state: CalcState, maxDecimals: number): CalcState {
-  const dot = state.entry.indexOf('.')
-  if (dot < 0) return state
-  if (maxDecimals === 0) return { ...state, entry: state.entry.slice(0, dot) || '0' }
-  if (state.entry.length - dot - 1 <= maxDecimals) return state
-  return { ...state, entry: state.entry.slice(0, dot + 1 + maxDecimals) }
+  const entry = clampString(state.entry, maxDecimals)
+  const accumulator =
+    state.accumulator === null ? null : roundToDecimals(state.accumulator, maxDecimals)
+  if (entry === state.entry && accumulator === state.accumulator) return state
+  return { ...state, entry, accumulator }
+}
+
+function clampString(entry: string, maxDecimals: number): string {
+  const dot = entry.indexOf('.')
+  if (dot < 0) return entry
+  if (maxDecimals === 0) return entry.slice(0, dot) || '0'
+  if (entry.length - dot - 1 <= maxDecimals) return entry
+  return entry.slice(0, dot + 1 + maxDecimals)
 }

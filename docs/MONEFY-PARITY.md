@@ -531,19 +531,47 @@ A naive importer that looks up hardcoded category names lost **≈237 of 1,683 r
 | `Sport` | `Sports` | 3 |
 | `Taxi` | *nothing* | 1 |
 
-**Therefore an unrecognised category blocks the batch.** It is never auto-created, never coerced,
-never zeroed — the import screen makes the operator map it. Silent auto-creation is how `Utilities`
-vanished; silent lookup failure is how `Communication` did.
+**Therefore an unrecognised category blocks the batch.** It is never coerced, never zeroed, and never
+created behind the operator's back — the import screen makes them decide. Silent auto-creation is how
+`Utilities` vanished; silent lookup failure is how `Communication` did.
+
+The forbidden thing is the *silence*, not the creation. A **"Create all missing"** action exists and
+is compatible with this rule: it lists every category and account it would create, with the name,
+kind, icon, colour and currency each would get, and writes nothing until the operator confirms. What
+must never come back is a resolver that invents a row on its own while resolving — the operator has
+to see the list and press the button. A twenty-category export should cost one decision, not twenty
+chores, and making it tedious is its own way of encouraging people to skip reading it.
+
+Two related rules fall out of the same principle — the operator must always know what they are
+getting:
+
+- **The screen states the exact cost of leaving something unmapped.** The commit button counts the
+  rows that will actually be written, and any that will be skipped are named. It used to promise the
+  whole file regardless, so an unmapped account dropped every one of its rows behind a button that
+  said otherwise — the 14% incident again, in a different disguise.
+- **Currencies are surfaced before the import, not discovered after it.** A row in a currency the
+  instance has no rate for imports perfectly well and then sits outside every converted total,
+  captioned "no exchange rate yet", with nothing connecting that to the file just imported. Preview
+  reports every currency in the file, and the screen offers to declare the ones this replica cannot
+  convert and fetch their rates. A missing rate is a warning, never a blocker: the transactions are
+  correct either way.
 
 ### How the importer applies this
 
 Built (`backend/internal/importer`, `internal/api/handlers_import.go`, `web-ui/src/views/ImportView.vue`).
 Two requests, mirroring the screen's two steps:
 
-- **Preview only parses.** It reports every distinct category and account name in the file, how each
+- **Preview only parses.** It reports every distinct category and account in the file, how each
   resolves (an exact case-insensitive match, the small alias table below, or neither), and how many
   rows each one covers — the count is what tells the operator whether an unresolved name is worth
   pausing for or is one stray row. Nothing is written.
+- **A name is not an identity.** Categories are grouped by `(name, kind)` and accounts by
+  `(name, currency)` — the same scoping the resolver matches on, so preview and commit cannot
+  disagree about what a thing is. Each entry carries a `key` (`"expense:Gifts"`, `"HUF:Cash"`) and
+  the mapping is keyed on that. One file can use `Gifts` as both an expense and an income category,
+  and `Cash` in two currencies; keyed on the bare name, mapping one silently mapped the other, onto a
+  row of the wrong kind or currency. That writes rows to the wrong place rather than skipping them,
+  which is worse than any of the failures above.
 - **Commit re-parses the same text** rather than trusting anything the client remembers from preview,
   for the same reason the sync protocol never trusts a client's idea of state, and writes every row it
   can resolve — checking the operator's own mapping first, then the exact match, then the alias table.

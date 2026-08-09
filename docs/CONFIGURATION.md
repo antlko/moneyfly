@@ -7,39 +7,66 @@ Everything lives in `<config-dir>/config.yaml`. The config directory is `./confi
 of defaults is also written out to `config.yaml` on the spot, so the file shows every field there
 is to adjust rather than only the ones an operator already knew to set.
 
-**Most of it is read only at startup**, so changes need a restart — `server.*` and `oidc.*`
-specifically, see below. The `app`, `sync` and `fx` sections are the exception: an admin can read
-and change them live from **Settings → Instance** in the app (or `GET`/`PUT /api/admin/settings`),
-with no restart required, and the change is written back to `config.yaml` so it survives one too.
+**Every value has exactly one owner.** There are three tiers, and nothing appears in two of them:
+
+| Tier | What | How it is set |
+| --- | --- | --- |
+| **Environment-only** | Transport (`addr`, `base_url`), config dir, log level | Environment variables. Never written to `config.yaml`. |
+| **File + Settings screen** | `app`, `sync`, `fx` | Hand-edit `config.yaml`, or change it live in **Settings → Instance** (`GET`/`PUT /api/admin/settings`). Applied without a restart and written back to the file. |
+| **File-only** | `oidc` | Hand-edit `config.yaml`. Client secrets are better supplied by environment variable. Restart required. |
+
+That split is the point: a field settable from two places has no single source of truth, and the
+symptom is a Settings screen that accepts a change, says "saved and applied", and shows the old
+value again — while quietly writing the environment's value into `config.yaml` as a side effect of
+saving something unrelated. Transport moved out of the file entirely rather than being marked
+read-only, because a running process cannot rebind its own listen address anyway: `addr` in a file
+is a value that looks editable and is not.
+
 There is still no raw config editor and no endpoint that exposes the whole file — the settings API
-only ever sees `app`/`sync`/`fx`, on purpose: `server.*` is transport configuration a running
-process cannot rebind itself anyway, and `oidc.*` can carry a client secret, which must never
-round-trip through a write endpoint. An OIDC secret supplied only by environment variable is never
-even readable by that endpoint, let alone writable — see `oidc` below.
+only ever sees `app`/`sync`/`fx`, on purpose, because `oidc.*` can carry a client secret which must
+never round-trip through a write endpoint. An OIDC secret supplied only by environment variable is
+never even readable by that endpoint, let alone writable — see `oidc` below.
 
 Start from `config/config.example.yaml`.
 
-## `server` — restart required, file/env only
+## `server` — environment-only
 
-| Field | Default | Meaning |
+Not a section of `config.yaml` any more. Set these as environment variables:
+
+| Variable | Default | Meaning |
 | --- | --- | --- |
-| `addr` | `:5007` | Listen address. Overridden by `MONEYFLY_ADDR`. |
-| `base_url` | *empty* | Externally reachable origin, e.g. `https://money.example.com`. **Required once any OIDC provider is configured** — the provider must be handed an absolute redirect URI. Overridden by `MONEYFLY_BASE_URL`. |
+| `MONEYFLY_ADDR` | `:5007` | Listen address. |
+| `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin, e.g. `https://money.example.com`. **Required once any OIDC provider is configured** — the provider must be handed an absolute redirect URI. |
 
 The default port is 5007 rather than the usual 8080: on a machine that self-hosts
 anything at all, 8080 is already taken, and the failure mode is a container that
 will not start for a reason that has nothing to do with this application.
 
-Not in the settings API: a running process cannot rebind its own listen address, and `base_url`
-is infrastructure the operator sets once, not a per-instance preference.
+> **Upgrading from a config.yaml with a `server:` block.** It still works. The block is read, a
+> warning names the variable to move to, and — importantly — it is **written back unchanged** on
+> every save, so an instance does not keep working until someone edits an unrelated setting and then
+> fail to start on the restart after that. Set the matching variable and the block is released: the
+> next save removes it and the migration is done. Nothing to do by hand, and nothing breaks if you
+> never get round to it.
 
 ## `app` — live, via Settings → Instance
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `registration` | `open` | `open` — anyone who can reach the instance may create an account. `closed` — no new accounts. Set this after creating yours if the instance is public. Overridden by `MONEYFLY_REGISTRATION`. |
+| `registration` | `open` | `open` — anyone who can reach the instance may create an account. `closed` — no new accounts, except the very first one. Set this after creating yours if the instance is public. `MONEYFLY_REGISTRATION` **seeds it on first boot only** — see below. |
 | `default_currency` | `EUR` | Currency a new account starts with. Three-letter code. |
-| `session_ttl_days` | `365` | Session lifetime. Long by design: this is a phone app you should not have to sign in to twice a year. |
+| `session_ttl_days` | `365` | Session lifetime, 1 to 3650. Long by design: this is a phone app you should not have to sign in to twice a year. |
+
+`MONEYFLY_REGISTRATION` is a **seed, not an override**. On a brand-new instance — no `config.yaml`
+yet — it decides what registration starts as and is written into the file like any other default.
+After that the file owns it, and the variable is never read again, so changing registration in
+Settings sticks instead of reverting on the next restart.
+
+That is what makes `MONEYFLY_REGISTRATION=closed` still worth setting on a public container: an
+instance whose config volume is empty comes up closed, so only *your* first account can be created
+and nobody who finds the URL first can claim it. Previously the variable also re-asserted itself on
+every load, which meant saving any unrelated setting silently baked it into `config.yaml` forever,
+and changing the dropdown appeared to work and then reverted.
 
 ## `sync` — live, via Settings → Instance
 
@@ -105,18 +132,21 @@ The redirect URI to register with the provider is:
 
 ## Environment variables
 
-Applied after the file and always winning, so a container can be configured without mounting a
-config at all.
+A container can be configured without mounting a config at all.
 
-| Variable | Overrides |
-| --- | --- |
-| `MONEYFLY_CONFIG_DIR` | config directory (also `--config-dir`, which wins) |
-| `MONEYFLY_ADDR` | `server.addr` |
-| `MONEYFLY_BASE_URL` | `server.base_url` |
-| `MONEYFLY_REGISTRATION` | `app.registration` |
-| `MONEYFLY_LOG_LEVEL` | log level: `debug` \| `info` \| `warn` \| `error` |
-| `MONEYFLY_OIDC_<ID>_CLIENT_ID` | that provider's `client_id` |
-| `MONEYFLY_OIDC_<ID>_CLIENT_SECRET` | that provider's `client_secret` |
+| Variable | Sets | When it is read |
+| --- | --- | --- |
+| `MONEYFLY_CONFIG_DIR` | config directory (also `--config-dir`, which wins) | Startup |
+| `MONEYFLY_ADDR` | listen address | Every load — the only source |
+| `MONEYFLY_BASE_URL` | public origin | Every load — the only source |
+| `MONEYFLY_LOG_LEVEL` | log level: `debug` \| `info` \| `warn` \| `error` | Startup |
+| `MONEYFLY_REGISTRATION` | `app.registration` | **First boot only**, as a seed |
+| `MONEYFLY_OIDC_<ID>_CLIENT_ID` | that provider's `client_id` | Every load |
+| `MONEYFLY_OIDC_<ID>_CLIENT_SECRET` | that provider's `client_secret` | Every load |
+
+Only non-empty values count — a variable set to the empty string is the same as not setting it, so
+you cannot use one to force a field back to empty. The OIDC variables apply to providers already
+listed in `config.yaml`; you cannot define a whole provider from the environment.
 
 `<ID>` is the provider's `id`, upper-cased with `-` replaced by `_`: provider `my-idp` reads
 `MONEYFLY_OIDC_MY_IDP_CLIENT_SECRET`.

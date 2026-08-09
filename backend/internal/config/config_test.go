@@ -209,13 +209,13 @@ func TestLoadMissingFileWritesFullDefaultFile(t *testing.T) {
 	}
 }
 
-// Environment variables must win at every Load, which means they must never
-// be the thing captured in the bootstrap file — otherwise a value only ever
-// meant to override this one run would quietly become the new on-disk
-// default forever.
-func TestLoadDoesNotBakeEnvIntoBootstrapFile(t *testing.T) {
+// Transport is environment-only, so it must not appear in the bootstrap file
+// at all — neither the env value (which would turn a one-run override into a
+// permanent default) nor a default, which would look editable and silently
+// not be.
+func TestLoadWritesNoServerSectionAtAll(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("MONEYFLY_ADDR", ":7070")
+	t.Setenv(envAddr, ":7070")
 
 	cfg, err := Load(dir)
 	if err != nil {
@@ -232,8 +232,184 @@ func TestLoadDoesNotBakeEnvIntoBootstrapFile(t *testing.T) {
 	if strings.Contains(string(raw), "7070") {
 		t.Errorf("the env-only addr leaked into the written file:\n%s", raw)
 	}
-	if !strings.Contains(string(raw), DefaultAddr) {
-		t.Errorf("the written file does not contain the real default %q:\n%s", DefaultAddr, raw)
+	if strings.Contains(string(raw), "server:") {
+		t.Errorf("config.yaml still carries a server section; transport is env-only:\n%s", raw)
+	}
+}
+
+// An install created before transport moved to the environment still has a
+// `server:` block, and an operator running OIDC behind a proxy has a real
+// base_url in it. Silently ignoring it would move their listener back to the
+// default and fail their OIDC startup.
+func TestLoadStillHonoursALegacyServerBlock(t *testing.T) {
+	dir := write(t, `
+server:
+  addr: :9999
+  base_url: https://money.example.com
+app:
+  registration: open
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Addr != ":9999" {
+		t.Errorf("addr = %q, want the legacy file value :9999", cfg.Server.Addr)
+	}
+	if cfg.Server.BaseURL != "https://money.example.com" {
+		t.Errorf("base_url = %q, want the legacy file value", cfg.Server.BaseURL)
+	}
+}
+
+// The legacy block must survive a save, or an OIDC instance keeps working
+// until someone changes an unrelated setting and then fails to start on the
+// restart after that — with nothing to connect the two events.
+func TestSavingSettingsDoesNotStripALegacyServerBlock(t *testing.T) {
+	dir := write(t, `
+server:
+  base_url: https://money.example.com
+oidc:
+  - id: my-idp
+    issuer: https://idp.example.com
+    client_id: abc
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	settings := SettingsOf(cfg)
+	settings.FX.RefreshAt = "05:30"
+	if _, err := UpdateSettings(dir, settings); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	// The whole point: the instance must still start.
+	reloaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("reload after saving an unrelated setting: %v", err)
+	}
+	if reloaded.Server.BaseURL != "https://money.example.com" {
+		t.Errorf("base_url = %q after a settings save, want it preserved",
+			reloaded.Server.BaseURL)
+	}
+}
+
+// …and once the environment supplies the value, the block is released: the
+// next save drops it and the migration completes on its own.
+func TestSettingTheEnvRetiresTheLegacyBlock(t *testing.T) {
+	dir := write(t, "server:\n  base_url: https://old.example.com\n")
+	t.Setenv(envBaseURL, "https://new.example.com")
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.BaseURL != "https://new.example.com" {
+		t.Fatalf("base_url = %q, want the env value to win", cfg.Server.BaseURL)
+	}
+
+	if _, err := UpdateSettings(dir, SettingsOf(cfg)); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if strings.Contains(string(raw), "server:") {
+		t.Errorf("the legacy block outlived the env var that replaced it:\n%s", raw)
+	}
+	if strings.Contains(string(raw), "new.example.com") {
+		t.Errorf("the env-only base_url was written into the file:\n%s", raw)
+	}
+}
+
+// …and the environment still outranks it, so migrating is a matter of setting
+// the variable, not of editing the file first.
+func TestEnvOutranksALegacyServerBlock(t *testing.T) {
+	dir := write(t, "server:\n  addr: :9999\n")
+	t.Setenv(envAddr, ":7070")
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Addr != ":7070" {
+		t.Errorf("addr = %q, want the env value to win over the legacy block", cfg.Server.Addr)
+	}
+}
+
+// Registration is a Settings field with a single owner: the file. The
+// environment seeds it on a brand-new instance — so a public container can be
+// brought up closed — and is never consulted again.
+func TestRegistrationEnvSeedsOnlyTheFirstBoot(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(envRegistration, RegistrationClosed)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.App.Registration != RegistrationClosed {
+		t.Fatalf("registration = %q, want the env seed on first boot", cfg.App.Registration)
+	}
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if !strings.Contains(string(raw), RegistrationClosed) {
+		t.Errorf("the seed was not written to the file, so it is not owned anywhere:\n%s", raw)
+	}
+
+	// Now the operator opens the instance up from the Settings screen. The
+	// variable is still set — and must no longer have any say, or the change
+	// silently reverts on the next restart.
+	settings := SettingsOf(cfg)
+	settings.App.Registration = RegistrationOpen
+	if _, err := UpdateSettings(dir, settings); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	reloaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.App.Registration != RegistrationOpen {
+		t.Errorf("registration = %q after opening it in Settings, want open — "+
+			"the environment must not re-assert itself on an existing instance",
+			reloaded.App.Registration)
+	}
+}
+
+// The bug this replaced: with the variable set, saving any unrelated setting
+// wrote the transient env value into config.yaml permanently.
+func TestUpdateSettingsIgnoresTheRegistrationEnv(t *testing.T) {
+	dir := write(t, "app:\n  registration: open\n")
+	t.Setenv(envRegistration, RegistrationClosed)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.App.Registration != RegistrationOpen {
+		t.Fatalf("registration = %q on an existing file, want the file's own value",
+			cfg.App.Registration)
+	}
+
+	// Change something else entirely.
+	settings := SettingsOf(cfg)
+	settings.FX.RefreshAt = "05:30"
+	if _, err := UpdateSettings(dir, settings); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if strings.Contains(string(raw), RegistrationClosed) {
+		t.Errorf("saving an unrelated setting baked the env-only registration "+
+			"into the file:\n%s", raw)
 	}
 }
 

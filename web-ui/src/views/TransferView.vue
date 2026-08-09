@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ArrowDown } from '@lucide/vue'
-import { computed, ref, watchEffect } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
+import { toast } from 'vue-sonner'
 import { useRouter } from 'vue-router'
 
 import AmountDisplay from '@/components/monefy/AmountDisplay.vue'
@@ -9,6 +10,7 @@ import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import DateRow from '@/components/monefy/DateRow.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { display, initialState, press, total, type Key } from '@/lib/calculator'
+import { clampAmountString, useClampOnCurrencyChange } from '@/lib/currencyClamp'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
 import { useDashboardStore } from '@/stores/dashboard'
@@ -60,6 +62,26 @@ const suggested = computed(() => {
 watchEffect(() => {
   if (touched.value) return
   received.value = suggested.value === null ? '' : String(suggested.value)
+})
+
+/*
+ * Changing "From" changes the currency of the amount already on the keypad, and
+ * `save()` below rounds to that currency's exponent — so without this, typing
+ * 12.34 against a EUR account and switching to HUF displays 12.34 and writes 12.
+ * The record screen has the same hazard and the same fix.
+ */
+useClampOnCurrencyChange(currency, calc, ({ before, after, currency: code }) => {
+  toast(`${code} has no minor unit — ${before} rounded to ${after}`)
+})
+
+/*
+ * The receiving figure is a plain input rather than a CalcState, but it is saved
+ * through the same `toMinor` and so has the same problem when "To" changes.
+ * Clamp whatever is in the box; if it is still the suggestion, `watchEffect`
+ * above recomputes it anyway and this is a no-op.
+ */
+watch(toCurrency, (next) => {
+  received.value = clampAmountString(received.value, next)
 })
 
 const amount = computed(() => display(calc.value))

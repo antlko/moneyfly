@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -39,6 +40,16 @@ func toNamedRows(names []db.NameKind) []importer.NamedRow {
 // nameStatusDTO is one distinct category or account name found in the CSV,
 // with how it resolves against what the account already has.
 type nameStatusDTO struct {
+	// Key identifies this entry for the mapping the client sends back, and is
+	// the *composite* — "expense:Gifts", "HUF:Cash" — not the bare name.
+	//
+	// The name alone is not an identity in either direction. A CSV that uses
+	// "Gifts" as both an expense and an income category produces two entries
+	// here (they resolve against different existing rows), and keying the map
+	// on the name meant mapping one silently mapped the other onto a category
+	// of the wrong kind. The same for an account name that appears in two
+	// currencies. The client never builds this — it echoes it back.
+	Key      string `json:"key"`
 	Name     string `json:"name"`
 	Kind     string `json:"kind,omitempty"`     // category only
 	Currency string `json:"currency,omitempty"` // account only
@@ -73,6 +84,7 @@ func summariseCategories(rows []importer.Row, existing []importer.NamedRow) []na
 	for _, k := range order {
 		res := importer.ResolveCategory(k.name, k.kind, existing, nil)
 		out = append(out, nameStatusDTO{
+			Key:  importer.CategoryKey(k.name, k.kind),
 			Name: k.name, Kind: k.kind, Resolved: res.Resolved(), ID: res.ID,
 			ViaAlias: res.ViaAlias, Count: counts[k],
 		})
@@ -80,32 +92,68 @@ func summariseCategories(rows []importer.Row, existing []importer.NamedRow) []na
 	return out
 }
 
-// summariseAccounts groups by name alone, taking the currency of the first
-// row seen for it as representative — true for every real Monefy export,
-// where an account name is a permanent wallet and so a permanent currency.
-// A row whose own currency later disagrees with that is still checked and
-// reported individually by buildImportOps at commit time, which is why this
-// summary is a preview, not the authority.
+// summariseAccounts returns each distinct (name, currency) pair, in order of
+// first appearance.
+//
+// Grouped by the pair and not by the name, because that is what
+// ResolveAccount actually matches on — an account is scoped to its currency, so
+// "Cash" in EUR and "Cash" in HUF are two different wallets. Grouping by name
+// and taking the first row's currency as representative made the preview claim
+// one resolved entry where the commit would find two, and the rows behind the
+// second currency were then dropped as unresolved after the operator had been
+// told the file was clean. Preview and commit have to agree about what a thing
+// *is* before they can agree about anything else.
 func summariseAccounts(rows []importer.Row, existing []importer.NamedRow) []nameStatusDTO {
-	var order []string
-	counts := map[string]int{}
-	currency := map[string]string{}
+	type key struct{ name, currency string }
+	var order []key
+	counts := map[key]int{}
 	for _, r := range rows {
-		if counts[r.Account] == 0 {
-			order = append(order, r.Account)
-			currency[r.Account] = r.Currency
+		k := key{r.Account, r.Currency}
+		if counts[k] == 0 {
+			order = append(order, k)
 		}
-		counts[r.Account]++
+		counts[k]++
 	}
 
 	out := make([]nameStatusDTO, 0, len(order))
-	for _, name := range order {
-		cur := currency[name]
-		res := importer.ResolveAccount(name, cur, existing, nil)
+	for _, k := range order {
+		res := importer.ResolveAccount(k.name, k.currency, existing, nil)
 		out = append(out, nameStatusDTO{
-			Name: name, Currency: cur, Resolved: res.Resolved(), ID: res.ID,
-			CurrencyMismatch: res.CurrencyMismatch, Count: counts[name],
+			Key:  importer.AccountKey(k.name, k.currency),
+			Name: k.name, Currency: k.currency, Resolved: res.Resolved(), ID: res.ID,
+			CurrencyMismatch: res.CurrencyMismatch, Count: counts[k],
 		})
+	}
+	return out
+}
+
+// currencyCountDTO is one distinct currency in the CSV and how many rows use it.
+//
+// A plain fact about the file — the server does not decide which of these are
+// "missing", because whether a currency is declared is a synced per-user
+// setting and a rate is a client-side cache. The import screen cross-references
+// both from its own replica, with no extra request.
+type currencyCountDTO struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
+// summariseCurrencies is what makes an import's currencies visible at all.
+// Rows in a currency the instance has no rate for import perfectly well and
+// then sit outside every total, captioned "no exchange rate yet", with nothing
+// to connect that to the file that was just imported.
+func summariseCurrencies(rows []importer.Row) []currencyCountDTO {
+	var order []string
+	counts := map[string]int{}
+	for _, r := range rows {
+		if counts[r.Currency] == 0 {
+			order = append(order, r.Currency)
+		}
+		counts[r.Currency]++
+	}
+	out := make([]currencyCountDTO, 0, len(order))
+	for _, code := range order {
+		out = append(out, currencyCountDTO{Code: code, Count: counts[code]})
 	}
 	return out
 }
@@ -117,10 +165,20 @@ type importPreviewRequest struct {
 }
 
 type importPreviewResponse struct {
-	TotalRows   int             `json:"totalRows"`
-	ParseErrors []parseErrorDTO `json:"parseErrors"`
-	Categories  []nameStatusDTO `json:"categories"`
-	Accounts    []nameStatusDTO `json:"accounts"`
+	TotalRows   int                `json:"totalRows"`
+	ParseErrors []parseErrorDTO    `json:"parseErrors"`
+	Categories  []nameStatusDTO    `json:"categories"`
+	Accounts    []nameStatusDTO    `json:"accounts"`
+	Currencies  []currencyCountDTO `json:"currencies"`
+	Groups      []groupCountDTO    `json:"groups"`
+}
+
+// groupCountDTO is how many rows use one (category, account) pair, keyed the
+// same way the mapping is. See summariseGroups.
+type groupCountDTO struct {
+	CategoryKey string `json:"categoryKey"`
+	AccountKey  string `json:"accountKey"`
+	Count       int    `json:"count"`
 }
 
 // handleImportPreview parses a Monefy CSV export and reports what it will
@@ -149,7 +207,37 @@ func (s *Server) handleImportPreview(c fiber.Ctx) error {
 		ParseErrors: toParseErrorDTOs(res.Errors),
 		Categories:  summariseCategories(res.Rows, existingCategories),
 		Accounts:    summariseAccounts(res.Rows, existingAccounts),
+		Currencies:  summariseCurrencies(res.Rows),
+		Groups:      summariseGroups(res.Rows),
 	})
+}
+
+// summariseGroups counts rows per (category, account) pair, so the screen can
+// say exactly how many rows a given mapping decision covers.
+//
+// Needed because the two counts cannot simply be added: a row blocked by both
+// an unmapped category *and* an unmapped account would be counted twice, and
+// the screen would claim to skip more rows than the file contains. With the
+// pairs, the client takes a union. Bounded by distinct pairs, not rows — a
+// 1683-row export with 20 categories over 3 accounts is at most 60 entries.
+func summariseGroups(rows []importer.Row) []groupCountDTO {
+	type key struct{ category, account string }
+	var order []key
+	counts := map[key]int{}
+	for _, r := range rows {
+		k := key{importer.CategoryKey(r.Category, r.Kind), importer.AccountKey(r.Account, r.Currency)}
+		if counts[k] == 0 {
+			order = append(order, k)
+		}
+		counts[k]++
+	}
+	out := make([]groupCountDTO, 0, len(order))
+	for _, k := range order {
+		out = append(out, groupCountDTO{
+			CategoryKey: k.category, AccountKey: k.account, Count: counts[k],
+		})
+	}
+	return out
 }
 
 func (s *Server) importNames(userID string) (categories, accounts []importer.NamedRow, err error) {
@@ -180,6 +268,37 @@ type importCommitResponse struct {
 	AlreadyImported int             `json:"alreadyImported"`
 	ParseErrors     []parseErrorDTO `json:"parseErrors"`
 	Unresolved      []parseErrorDTO `json:"unresolved"`
+	// Rows that were resolved and then could not be written, because a chunk
+	// after the first failed. Zero on every ordinary import.
+	Failed        int    `json:"failed"`
+	FailureReason string `json:"failureReason,omitempty"`
+}
+
+// applyInChunks writes ops in batches ApplyOps will accept, and reports what
+// landed even when a later batch fails.
+//
+// ApplyOps rejects anything over syncproto.MaxOpsPerPush outright, and an
+// import is routinely thousands of rows in one request. Chunking is the answer,
+// but it trades one atomic transaction for N independent ones — so a failure
+// half way through leaves the earlier chunks committed. Returning only the
+// error would throw away the count of what was already written, and the caller
+// would have to report a total failure over a partial success.
+//
+// A free function rather than a method so it can be tested against a stub
+// without standing up a database.
+func applyInChunks(
+	apply func([]syncproto.Op) (db.ApplyResult, error),
+	ops []syncproto.Op,
+) (accepted int, lastSeq int64, err error) {
+	for chunk := range slices.Chunk(ops, syncproto.MaxOpsPerPush) {
+		result, chunkErr := apply(chunk)
+		if chunkErr != nil {
+			return accepted, lastSeq, chunkErr
+		}
+		accepted += result.Accepted
+		lastSeq = result.ServerSeq
+	}
+	return accepted, lastSeq, nil
 }
 
 // handleImportCommit re-parses the same CSV text the preview step saw and
@@ -217,34 +336,41 @@ func (s *Server) handleImportCommit(c fiber.Ctx) error {
 		return err
 	}
 
-	// ApplyOps rejects a batch over syncproto.MaxOpsPerPush outright, and an
-	// import is routinely thousands of rows in one request — nothing else
-	// that builds ops (a push, the recurring worker) hands over more than a
-	// device's own queue or a single rule's tick, so chunking is only ever
-	// needed here.
-	var accepted int
-	var lastSeq int64
-	for chunk := range slices.Chunk(ops, syncproto.MaxOpsPerPush) {
-		result, err := s.conn().ApplyOps(user.ID, chunk)
-		if err != nil {
-			return err
-		}
-		accepted += result.Accepted
-		lastSeq = result.ServerSeq
-	}
+	accepted, lastSeq, applyErr := applyInChunks(
+		func(chunk []syncproto.Op) (db.ApplyResult, error) {
+			return s.conn().ApplyOps(user.ID, chunk)
+		}, ops)
+
 	// Every one of these transactions is new to every device, including
 	// whichever one is running the import — unlike an ordinary push, there
 	// is no originating device already holding the rows locally to skip.
+	//
+	// Published before the error is considered, because rows that were written
+	// are written whether or not a later chunk failed, and the other devices
+	// should not have to wait for their next poll to find out.
 	if accepted > 0 {
 		s.events.publish(user.ID, syncEvent{Seq: lastSeq, DeviceID: serverDeviceID})
 	}
 
-	return c.JSON(importCommitResponse{
+	out := importCommitResponse{
 		Imported:        accepted,
 		AlreadyImported: alreadyImported,
 		ParseErrors:     toParseErrorDTOs(res.Errors),
 		Unresolved:      unresolved,
-	})
+	}
+	if applyErr != nil {
+		// Deliberately a 200 carrying the damage, not a 500. The central
+		// errorHandler renders only {"error": …}, which would discard the
+		// count of what already landed — and "the import failed" is a lie
+		// about a database that now holds several thousand new rows. Re-running
+		// the same file is safe: buildImportOps de-duplicates on natural keys,
+		// so the rows that made it are skipped the second time.
+		out.Failed = len(ops) - accepted
+		out.FailureReason = applyErr.Error()
+		slog.ErrorContext(c.Context(), "import: applying ops",
+			"user", user.ID, "accepted", accepted, "failed", out.Failed, "error", applyErr)
+	}
+	return c.JSON(out)
 }
 
 // buildImportOps resolves each row and turns the ones it can into sync ops,

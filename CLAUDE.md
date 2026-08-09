@@ -96,7 +96,17 @@ running the dev servers.
   in" — clear the session. A transport failure means nothing about the session, so the app falls back
   to the profile cached in `meta.userProfile` and carries on. Conflating them puts a sign-in form in
   front of a ledger that is already on the device, with no way to get past it: the app becomes
-  useless exactly when offline-first is supposed to earn its keep.
+  useless exactly when offline-first is supposed to earn its keep. Note *401 specifically*, not "any
+  `ApiError`" — a 500 is the server having a bad day, not a statement about this cookie.
+- **The network is not on the path to first paint.** `auth.bootstrap()` is what the router guard
+  awaits before anything renders, so it resolves from the cached profile (one IndexedDB read) and
+  checks with the server *afterwards*; only a first-ever launch, with nothing cached to show, waits
+  on a request. It used to await two, which meant an installed PWA opened on a bad connection showed
+  a blank screen until they resolved or hit the 15s timeout. Two things follow and are easy to undo
+  by accident: `main.ts` mounts on `router.isReady()` so the inline splash in `index.html` is not
+  replaced by a blank page while the guard runs, and `App.vue` watches `isSignedIn` to leave a
+  protected screen if revalidation later returns a real 401 — the guard alone no longer covers that,
+  because the screen is already rendered by then.
 - **Transfers are one row** (`kind='transfer'` with `to_account_id`), not a linked pair — a pair could
   sync half-applied.
 - **Money is integer minor units with a per-currency exponent.** HUF has 0 decimals and a real export
@@ -151,6 +161,26 @@ running the dev servers.
   fills the pointer, and callers ask `cfg.FX.On()`.
 - **Fiber handlers** return `fiber.NewError(code, msg)` for errors (the central `errorHandler` renders
   `{"error": msg}` — the shape the frontend's `ApiError` parses); success via `c.JSON`.
+- **The compression middleware must never reach `/api/sync/events`.** SSE is a response that never
+  ends, delivered a few bytes at a time; a compressor holds those bytes back until it has something
+  worth compressing, so events arrive when the buffer fills instead of when the server sent them. It
+  fails invisibly — every request still returns 200 — and reads as devices that look offline while
+  syncing fine. `compress.New` therefore carries a `Next` predicate (`skipCompression`, matched on the
+  request *path*, because the response content type is not knowable when the middleware runs), and
+  `server.go` registers the route through the same `eventStreamPath` constant so a rename cannot
+  silently start buffering the stream. Any future streaming endpoint has to be added to that skip.
+- **Anything that shortens a money figure rounds through `roundToDecimals`, never `toFixed`.**
+  `toFixed` rounds the binary value, so 1.2345 at three decimals gives 1.234 where `toMinor` gives
+  1.235 — and a clamp that disagrees with the save is precisely the "displayed number is not the
+  stored number" bug it was added to prevent. `roundToDecimals` shares `toMinor`'s `shiftDecimal`
+  trick and lives beside it in `web-ui/src/lib/money.ts`.
+- **A screen that types an amount *and* can change the account needs `useClampOnCurrencyChange`**
+  (`web-ui/src/lib/currencyClamp.ts`), not a handler on the account picker. The currency is derived
+  from an account that comes from a Dexie `liveQuery` and a remembered setting — both resolve after
+  mount and can change from a background sync, with no tap to hang a handler on. Watching the derived
+  currency covers every path; wiring the picker covers the one someone remembered. `RecordView` and
+  `TransferView` both use it; `TransferView` additionally clamps its hand-typed "received" box with
+  `clampAmountString`.
 - **Synced rows are JSON plus generated columns.** Every synced table stores the row body in a `data`
   TEXT column; the fields the *server* queries are SQLite VIRTUAL generated columns over it. So
   adding a field is a client-side change, and only a new server-side query needs a migration. Don't
@@ -257,6 +287,21 @@ running the dev servers.
 - **A template handler must be one expression.** `@click="a(); b()"` across two statements — or one
   statement carrying a TypeScript cast — does not compile, and **`vue-tsc` does not catch it**: only
   the dev server does, at request time, and the page renders blank. Put it in a named function.
+- **The import's mapping is keyed on a composite, never a bare name.** `importer.CategoryKey`
+  (`kind:name`) and `AccountKey` (`currency:name`) are the identity, because one export can use
+  `Gifts` as both an expense and an income category and `Cash` in two currencies — each is two
+  distinct things resolving against different rows. Keyed on the name, mapping one silently mapped
+  the other onto a category of the wrong kind: rows written to the *wrong place* rather than skipped,
+  which is worse than the data loss the importer was built to prevent. The preview groups by the same
+  pairs the resolver matches on, so preview and commit cannot disagree; the client echoes the `key`
+  back and never builds one. A bare name still resolves, as a fallback for older callers.
+- **`ApplyOps` takes at most `MaxOpsPerPush` (1000), so anything that builds ops in bulk goes through
+  `applyInChunks`.** It returns what landed *alongside* the error, because chunking means N
+  transactions rather than one and a mid-way failure leaves the earlier ones committed — the importer
+  reports that as a 200 carrying `imported`/`failed`, not a 500, since `errorHandler` renders only
+  `{"error": …}` and would throw the count away. Re-running is always safe (natural-key dedup). The
+  recurring worker uses the same helper defensively; `maxCatchUpPerTick` currently keeps it under the
+  limit, and `TestCatchUpCapStaysUnderTheOpLimit` guards that relationship.
 - **Migrations**: add a new `backend/internal/db/migrations/NNNNN_name.sql` with `-- +goose Up`/`Down`;
   never edit an applied one. Dialect `sqlite3`. They are embedded and run inside `db.Open` on every
   start — there is no separate migrate command and the distroless image has no shell to run one.

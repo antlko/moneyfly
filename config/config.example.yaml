@@ -8,14 +8,13 @@
 #
 # The `app`, `sync` and `fx` sections can also be changed from Settings →
 # Instance in the app (admin only), which applies immediately and writes the
-# change back here — no restart. `server` and `oidc` are edited here or by
-# environment variable only, and are read at startup, so those need a restart.
-
-server:
-  addr: ':5007'
-  # Externally reachable origin. Required as soon as any OIDC provider is
-  # configured, because the provider must be handed an absolute redirect URI.
-  base_url: ''
+# change back here — no restart. `oidc` is edited here only and read at
+# startup, so it needs one.
+#
+# There is no `server:` section: the listen address and public origin are set
+# by MONEYFLY_ADDR and MONEYFLY_BASE_URL and never live in this file, so that
+# no value is settable from two places at once. An older config.yaml that still
+# has the block keeps working — see docs/CONFIGURATION.md.
 
 app:
   # open   — anyone who can reach the instance may create an account

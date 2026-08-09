@@ -4,6 +4,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"path"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
 	recovermw "github.com/gofiber/fiber/v3/middleware/recover"
 
 	"moneyfly/internal/auth"
@@ -33,11 +36,14 @@ type Server struct {
 	database  *db.DB
 	oidc      *auth.OIDCRegistry
 
-	app    *fiber.App
-	webFS  fs.FS
-	logins *loginLimiter
-	events *broker
-	stop   chan struct{}
+	app   *fiber.App
+	webFS fs.FS
+	// indexETag is the app shell's entity tag, fixed for the process lifetime
+	// because the embedded FS is compiled into the binary.
+	indexETag string
+	logins    *loginLimiter
+	events    *broker
+	stop      chan struct{}
 	// Signals the FX loop to look for newly needed currencies. Buffered by one:
 	// the signal means "something changed", so a second one while the first is
 	// pending would say nothing new.
@@ -66,6 +72,7 @@ func New(configDir string) (*Server, error) {
 		database:  database,
 		oidc:      newOIDCRegistry(cfg),
 		webFS:     web.FS(),
+		indexETag: indexETag(web.FS()),
 		logins:    newLoginLimiter(),
 		events:    newBroker(),
 		stop:      make(chan struct{}),
@@ -78,6 +85,12 @@ func New(configDir string) (*Server, error) {
 	})
 	s.app.Use(recovermw.New())
 	s.app.Use(s.requestLogger)
+	// Compression is worth more here than anywhere else in the app: the SPA's
+	// critical path is ~360 KB of JS and CSS that gzips to ~120 KB, and it is
+	// paid on every cold load. It also covers /api/sync/snapshot and
+	// /api/sync/pull, which are the largest JSON the app ever moves — the whole
+	// cost of a new device bootstrapping.
+	s.app.Use(compress.New(compress.Config{Next: isEventStream}))
 	s.routes()
 
 	go s.retentionLoop()
@@ -85,6 +98,30 @@ func New(configDir string) (*Server, error) {
 	go s.recurringLoop()
 	return s, nil
 }
+
+// eventStreamPath is the one route that must never be compressed.
+const eventStreamPath = "/api/sync/events"
+
+// isEventStream keeps the compressor off the sync event stream.
+//
+// SSE is a response that never ends, delivered a few bytes at a time. A
+// compressor buffers to find something worth compressing, so those bytes stop
+// arriving when they happen rather than when the server sent them — devices
+// then look offline while the server is answering perfectly well. The dev proxy
+// already carries a `no-transform` header for the same reason
+// (web-ui/vite.config.ts).
+//
+// Matched on the request path rather than the response content type: the
+// middleware decides before the handler has set a single header, so the type is
+// not knowable yet.
+//
+// Split in two so the rule itself can be tested. Driving a real request through
+// the middleware is not an option for this one: an authenticated event stream
+// never completes, so the test harness waits for a response that is never
+// coming.
+func isEventStream(c fiber.Ctx) bool { return skipCompression(c.Path()) }
+
+func skipCompression(path string) bool { return path == eventStreamPath }
 
 func newOIDCRegistry(cfg *config.Config) *auth.OIDCRegistry {
 	providers := make([]auth.ProviderConfig, 0, len(cfg.OIDC))
@@ -153,7 +190,9 @@ func (s *Server) routes() {
 	app.Post("/api/sync/push", authed, s.handlePush)
 	app.Get("/api/sync/pull", authed, s.handlePull)
 	app.Get("/api/sync/snapshot", authed, s.handleSnapshot)
-	app.Get("/api/sync/events", authed, s.handleEvents)
+	// Registered via the same constant the compression middleware skips on, so
+	// renaming the route cannot silently start buffering the stream.
+	app.Get(eventStreamPath, authed, s.handleEvents)
 
 	// Import. Preview never writes; commit re-parses rather than trusting
 	// anything the client remembers from the preview response — see
@@ -228,12 +267,36 @@ func (s *Server) serveSPA(c fiber.Ctx) error {
 	return c.Send(data)
 }
 
+// indexETag is the app shell's entity tag, computed once at startup.
+//
+// index.html is `no-cache`, which means *revalidate*, not "do not store" — but
+// with nothing to revalidate against, every launch re-downloads the whole file.
+// A tag turns that into a 304 with no body. Computed here rather than per
+// request because the embedded FS cannot change while the process is running:
+// its contents are compiled into the binary.
+func indexETag(webFS fs.FS) string {
+	data, err := fs.ReadFile(webFS, "index.html")
+	if err != nil {
+		return "" // No shell to serve; sendIndex reports it properly.
+	}
+	return fmt.Sprintf("%q", fmt.Sprintf("%x", sha256.Sum256(data)))
+}
+
 func (s *Server) sendIndex(c fiber.Ctx) error {
 	data, err := fs.ReadFile(s.webFS, "index.html")
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "web UI not built")
 	}
+	// `no-cache` stays: the shell names the hashed asset chunks, so serving a
+	// stale one from cache pins the app to an old build. It has to be checked
+	// every launch — but checking can cost a 304 instead of the whole file.
 	c.Set("Cache-Control", "no-cache")
+	if s.indexETag != "" {
+		c.Set("ETag", s.indexETag)
+		if match := c.Get("If-None-Match"); match != "" && strings.Contains(match, s.indexETag) {
+			return c.SendStatus(fiber.StatusNotModified)
+		}
+	}
 	c.Type("html")
 	return c.Send(data)
 }

@@ -193,23 +193,49 @@ unrecognised category or account is never guessed at, and `internal/importer` fo
   "totalRows": 1683,
   "parseErrors": [{ "line": 45, "reason": "date \"31.13.2021\" is not DD.MM.YYYY" }],
   "categories": [
-    { "name": "Utilities", "kind": "expense", "resolved": false, "count": 119 },
-    { "name": "HotelTrip", "kind": "expense", "resolved": true, "id": "cat:hotel-trip",
-      "viaAlias": true, "count": 58 }
+    { "key": "expense:Utilities", "name": "Utilities", "kind": "expense",
+      "resolved": false, "count": 119 },
+    { "key": "expense:HotelTrip", "name": "HotelTrip", "kind": "expense", "resolved": true,
+      "id": "cat:hotel-trip", "viaAlias": true, "count": 58 }
   ],
   "accounts": [
-    { "name": "EUR", "resolved": true, "id": "acc:eur", "count": 340 }
-  ]
+    { "key": "EUR:EUR", "name": "EUR", "currency": "EUR", "resolved": true,
+      "id": "acc:eur", "count": 340 },
+    // Same name, different currency — a different wallet, listed separately.
+    { "key": "HUF:EUR", "name": "EUR", "currency": "HUF", "resolved": false,
+      "currencyMismatch": true, "count": 12 }
+  ],
+  // Every currency the file uses. Rows in one with no rate import fine and then
+  // sit outside every converted total, so the screen offers to declare them.
+  "currencies": [{ "code": "EUR", "count": 1331 }, { "code": "HUF", "count": 352 }],
+  // Rows per (category, account) pair, so a client can say exactly how many rows
+  // a mapping decision covers. Summing the two `count` fields instead would
+  // double-count a row whose category *and* account are both unmapped.
+  "groups": [{ "categoryKey": "expense:Utilities", "accountKey": "EUR:EUR", "count": 119 }]
 }
 ```
 
-`categoryMap` / `accountMap` on commit are keyed on the CSV's own name for that category or
-account — exactly what preview reported as unresolved — mapping it to an existing id. There is no
-way to create one through this endpoint: create it the ordinary way first (an op through
-`/api/sync/push`, same as the record screen does) and map to the id that returns. Commit re-parses
-the same `csv` rather than trusting anything from the preview response, for the same reason the sync
-protocol never trusts a client's idea of state — what a name resolves to may have changed in the
-seconds between the two requests.
+Accounts are grouped by `(name, currency)` and categories by `(name, kind)`, matching exactly what
+the resolver matches on — so preview and commit cannot disagree about what a thing *is*. Grouping
+accounts by name alone reported one resolved entry where commit found two, and the second currency's
+rows were dropped as unresolved after the operator had been told the file was clean.
+
+`categoryMap` / `accountMap` on commit are keyed on the **`key`** each preview entry carries —
+`"expense:Gifts"`, `"HUF:Cash"` — not on the bare name. A name is not an identity: one file can use
+`Gifts` as both an expense and an income category, and one account name can appear in two
+currencies, and each of those is two distinct things resolving against different existing rows.
+Keyed on the name, mapping one silently mapped the other, onto a category of the wrong kind or an
+account in the wrong currency — rows written to the wrong place rather than skipped, which is the one
+outcome this endpoint is built to avoid. Build nothing yourself: echo back the `key` preview gave
+you. A bare name is still accepted as a fallback so older callers keep working, and a composite key
+wins over one when both are present.
+
+There is no way to create a category or account through this endpoint: create it the ordinary way
+first (an op through `/api/sync/push`, same as the record screen does) and map to the id that
+returns. Push before committing — an id still sitting in a client's outbox names a row the server has
+never seen. Commit re-parses the same `csv` rather than trusting anything from the preview response,
+for the same reason the sync protocol never trusts a client's idea of state: what a name resolves to
+may have changed in the seconds between the two requests.
 
 ```jsonc
 // commit response
@@ -217,13 +243,23 @@ seconds between the two requests.
   "imported": 1683,       // newly written
   "alreadyImported": 12,  // matched an existing natural key — a re-run of an overlapping export
   "parseErrors": [ /* same shape as preview */ ],
-  "unresolved": [{ "line": 45, "reason": "category \"Utilities\" is not mapped" }]
+  "unresolved": [{ "line": 45, "reason": "category \"Utilities\" is not mapped" }],
+  "failed": 0             // resolved but unwritable; see below. Absent reason when zero.
 }
 ```
 
 A row is never coerced onto some other category and never silently dropped: it either writes, or it
 is one of `parseErrors` (could not be read at all) or `unresolved` (read fine, but its category or
 account was not mapped), always with the line number a spreadsheet would show.
+
+**A partial write answers 200, not 500.** The commit applies its ops in batches, because a real
+export is thousands of rows and `ApplyOps` takes at most `MaxOpsPerPush` (1000) at a time — which
+means N independent transactions rather than one, and a failure part way through leaves the earlier
+batches committed. Reporting that as an error would be a lie about a database that now holds several
+thousand new rows, and the central `errorHandler` renders only `{"error": …}`, so the count of what
+landed would be lost. Instead `imported` is what was written, `failed` is what was not, and
+`failureReason` carries the underlying error. Re-running the identical file is the fix and is always
+safe: natural-key de-duplication skips everything that already landed.
 
 ## API tokens
 

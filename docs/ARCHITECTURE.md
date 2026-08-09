@@ -40,6 +40,7 @@ shape here.
 main.go → api.New(configDir) → config.Load → fiber.New
                                               ├── recover
                                               ├── requestLogger
+                                              ├── compress (skips the SSE route)
                                               ├── /api/... handlers
                                               └── serveSPA (catch-all, last)
 ```
@@ -48,6 +49,17 @@ main.go → api.New(configDir) → config.Load → fiber.New
 `index.html` for unknown paths so client-side routes work on a hard refresh. Unmatched `/api/*`
 paths return a JSON 404 instead of HTML — a typo'd endpoint should never hand the client a page it
 would try to parse as JSON.
+
+**Compression covers everything except `/api/sync/events`.** Fiber does not compress by default, and
+the SPA's critical path is ~356 KB of JS and CSS that gzips to ~121 KB — a ~2.9× cut paid back on
+every cold load, plus the same saving on `/api/sync/snapshot` and `/api/sync/pull`, which are the
+largest JSON the app ever moves. The event stream is the one exclusion and it is not optional: SSE is
+a response that never ends, delivered a few bytes at a time, and a compressor buffers those bytes
+until it has something worth compressing — so events stop arriving when the server sent them. Nothing
+errors; devices simply look offline while the server answers perfectly well. The skip is matched on
+the request path (the response content type is not known when the middleware runs), and the route is
+registered through the same `eventStreamPath` constant the skip tests against so the two cannot
+drift.
 
 Errors: handlers return `fiber.NewError(code, msg)`; the central `errorHandler` renders every one as
 `{"error": msg}`, which is the only shape `ApiError` on the client parses. Unexpected (non-Fiber)

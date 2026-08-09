@@ -41,6 +41,29 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    // Every browser this PWA supports has these; the default target emits
+    // downlevel helpers for engines that could not run the app anyway.
+    target: 'es2022',
+    rollupOptions: {
+      output: {
+        /*
+         * Split the two dependencies that never change on an app release into
+         * their own chunks, so a deploy that touches only our code does not
+         * invalidate ~170 KB of vendor bytes the browser already has.
+         *
+         * Only these two: chunking by "everything in node_modules" is the
+         * common version and a worse one — it bundles rarely-used libraries in
+         * with the runtime and makes the first load bigger, not smaller.
+         */
+        manualChunks(id) {
+          if (id.includes('/node_modules/dexie/')) return 'dexie'
+          if (/\/node_modules\/(@?vue|vue-router|pinia)\//.test(id)) return 'vue'
+          return undefined
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

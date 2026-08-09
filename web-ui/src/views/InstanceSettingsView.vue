@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ChevronDown, ChevronUp } from '@lucide/vue'
+import { computed, onMounted, ref } from 'vue'
 
 import * as http from '@/api/http'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
+import { CURRENCY_OPTIONS } from '@/lib/currencies'
 
 /**
  * Instance-wide settings — the config.yaml fields an admin may now change
@@ -17,13 +19,22 @@ import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
  * through a write endpoint.
  */
 
-// The fixed set of provider ids `fx.providers` accepts — mirrors
-// backend/internal/config's FXProviders. Small and stable enough that
-// fetching it from an endpoint would be a round trip for two constants.
-const FX_PROVIDERS: { id: string; label: string }[] = [
-  { id: 'open-er-api', label: 'open.er-api.com' },
-  { id: 'fawazahmed0', label: 'fawazahmed0/currency-api' },
-]
+/*
+ * Human labels for provider ids. Presentation only — the authoritative *set*
+ * comes from the server (`fxProvidersAvailable`), because a hardcoded copy here
+ * does not just go stale: `toggleProvider` used to rebuild the saved list from
+ * a local constant, so a provider this build had never heard of was silently
+ * deleted from config.yaml the next time anyone saved anything at all.
+ *
+ * An id with no entry here falls back to showing the id, so a provider added on
+ * the backend is usable immediately without a frontend release.
+ */
+const PROVIDER_LABELS: Record<string, string> = {
+  'open-er-api': 'open.er-api.com',
+  fawazahmed0: 'fawazahmed0/currency-api',
+}
+
+const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id
 
 const settings = ref<http.InstanceSettings | null>(null)
 const busy = ref(false)
@@ -41,16 +52,50 @@ async function load() {
   }
 }
 
+/*
+ * Add or remove one provider, leaving the rest of the list — and crucially its
+ * order — exactly as it was. Providers are tried in order and the first that
+ * answers wins, so the order is a real setting, not an artefact.
+ *
+ * A newly enabled provider goes on the end, where it acts as a fallback, rather
+ * than displacing whatever the operator chose to try first.
+ */
 function toggleProvider(id: string, on: boolean) {
   if (!settings.value) return
-  const set = new Set(settings.value.fxProviders)
-  if (on) set.add(id)
-  else set.delete(id)
-  // FX_PROVIDERS order, not insertion order — providers are tried in the
-  // order they are stored, and that order should stay predictable rather
-  // than depending on which checkbox happened to be clicked last.
-  settings.value.fxProviders = FX_PROVIDERS.map((p) => p.id).filter((id) => set.has(id))
+  const current = settings.value.fxProviders
+  if (on) {
+    if (!current.includes(id)) settings.value.fxProviders = [...current, id]
+  } else {
+    settings.value.fxProviders = current.filter((p) => p !== id)
+  }
 }
+
+/** Move a provider one place up or down the try-order. */
+function moveProvider(id: string, delta: number) {
+  if (!settings.value) return
+  const list = [...settings.value.fxProviders]
+  const from = list.indexOf(id)
+  const to = from + delta
+  if (from < 0 || to < 0 || to >= list.length) return
+  list.splice(to, 0, ...list.splice(from, 1))
+  settings.value.fxProviders = list
+}
+
+/**
+ * Every provider the server accepts, enabled ones first in their configured
+ * order, then the rest. Reordering only applies to the enabled ones, since the
+ * order of something that is not tried means nothing.
+ */
+const providerRows = computed(() => {
+  const s = settings.value
+  if (!s) return []
+  const enabled = s.fxProviders.filter((id) => s.fxProvidersAvailable.includes(id))
+  const disabled = s.fxProvidersAvailable.filter((id) => !s.fxProviders.includes(id))
+  return [
+    ...enabled.map((id, i) => ({ id, on: true, first: i === 0, last: i === enabled.length - 1 })),
+    ...disabled.map((id) => ({ id, on: false, first: false, last: false })),
+  ]
+})
 
 async function save() {
   if (!settings.value) return
@@ -97,14 +142,26 @@ async function save() {
 
           <label class="block text-sm">
             <span class="mb-1 block text-mf-muted">Default currency for a new account</span>
+            <!--
+              A datalist rather than a select: lib/currencies.ts is deliberately
+              a shortlist of what people actually keep money in, not ISO 4217 in
+              full, so restricting the field to it would make a perfectly valid
+              code unenterable. Suggest, do not constrain.
+            -->
             <input
               v-model="settings.defaultCurrency"
               type="text"
+              list="instance-currencies"
               maxlength="3"
               required
               class="w-24 rounded-lg border border-mf-muted/60 bg-mf-bg px-3 py-2 uppercase outline-none focus:border-mf-green"
               @input="settings.defaultCurrency = settings.defaultCurrency.toUpperCase()"
             />
+            <datalist id="instance-currencies">
+              <option v-for="c in CURRENCY_OPTIONS" :key="c.code" :value="c.code">
+                {{ c.name }}
+              </option>
+            </datalist>
           </label>
 
           <label class="block text-sm">
@@ -113,9 +170,14 @@ async function save() {
               v-model.number="settings.sessionTtlDays"
               type="number"
               min="1"
+              :max="settings.sessionTtlDaysMax"
               required
               class="w-32 rounded-lg border border-mf-muted/60 bg-mf-bg px-3 py-2 outline-none focus:border-mf-green"
             />
+            <span class="mt-1 block text-xs text-mf-muted">
+              How long a signed-in device stays signed in. Long on purpose — this is a phone app you
+              should not have to sign in to twice a year.
+            </span>
           </label>
         </section>
 
@@ -163,15 +225,37 @@ async function save() {
 
             <div class="text-sm">
               <span class="mb-1 block text-mf-muted">Providers, tried in order</span>
-              <label v-for="p in FX_PROVIDERS" :key="p.id" class="flex items-center gap-2 py-1">
-                <input
-                  type="checkbox"
-                  class="size-4"
-                  :checked="settings.fxProviders.includes(p.id)"
-                  @change="toggleProvider(p.id, ($event.target as HTMLInputElement).checked)"
-                />
-                {{ p.label }}
-              </label>
+              <div v-for="p in providerRows" :key="p.id" class="flex items-center gap-2 py-1">
+                <label class="flex min-w-0 flex-1 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    class="size-4 shrink-0"
+                    :checked="p.on"
+                    @change="toggleProvider(p.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span class="truncate">{{ providerLabel(p.id) }}</span>
+                </label>
+                <div v-if="p.on" class="flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    aria-label="Try earlier"
+                    :disabled="p.first"
+                    class="grid size-7 place-items-center rounded-lg border border-mf-muted/60 disabled:opacity-30"
+                    @click="moveProvider(p.id, -1)"
+                  >
+                    <ChevronUp :size="14" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Try later"
+                    :disabled="p.last"
+                    class="grid size-7 place-items-center rounded-lg border border-mf-muted/60 disabled:opacity-30"
+                    @click="moveProvider(p.id, 1)"
+                  >
+                    <ChevronDown :size="14" />
+                  </button>
+                </div>
+              </div>
               <p v-if="!settings.fxProviders.length" class="text-xs text-mf-red-text">
                 At least one provider is required while exchange rates are on.
               </p>

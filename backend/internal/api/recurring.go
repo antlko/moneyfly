@@ -82,12 +82,27 @@ func (s *Server) materialiseDue(today string) {
 			continue
 		}
 
-		res, err := s.conn().ApplyOps(rule.UserID, ops)
+		// Chunked defensively, not because this path can currently overflow:
+		// maxCatchUpPerTick caps a rule at 500 occurrences plus its own advance,
+		// comfortably under syncproto.MaxOpsPerPush. The two constants are
+		// declared in different packages for different reasons, though, and
+		// nothing but arithmetic keeps them in that order — raise the catch-up
+		// cap past the op limit and this rule would 500 here, never advance its
+		// `nextOn`, and retry the identical failing batch on every tick
+		// afterwards, wedged permanently behind a single log line.
+		// TestCatchUpCapStaysUnderTheOpLimit guards the relationship; this
+		// guards the consequence.
+		accepted, lastSeq, err := applyInChunks(
+			func(chunk []syncproto.Op) (db.ApplyResult, error) {
+				return s.conn().ApplyOps(rule.UserID, chunk)
+			}, ops)
 		if err != nil {
-			slog.Error("recurring: applying ops", "rule", rule.ID, "user", rule.UserID, "error", err)
-			continue
+			slog.Error("recurring: applying ops", "rule", rule.ID, "user", rule.UserID,
+				"accepted", accepted, "error", err)
+			// Fall through rather than `continue`: whatever landed still has to
+			// be published, exactly as in the import path.
 		}
-		if res.Accepted == 0 {
+		if accepted == 0 {
 			continue
 		}
 		slog.Info("recurring: materialised", "rule", rule.ID, "user", rule.UserID,
@@ -95,7 +110,7 @@ func (s *Server) materialiseDue(today string) {
 		// No originating device to skip here, unlike a client's own push — the
 		// transaction just created sits on no device yet, so every one of the
 		// user's devices, including whichever created the rule, needs the pull.
-		s.events.publish(rule.UserID, syncEvent{Seq: res.ServerSeq, DeviceID: serverDeviceID})
+		s.events.publish(rule.UserID, syncEvent{Seq: lastSeq, DeviceID: serverDeviceID})
 	}
 }
 

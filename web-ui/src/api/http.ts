@@ -220,6 +220,17 @@ export const fxSetRate = (quote: string, rate: string, asOf?: string) =>
 
 /** One distinct category or account name found in the file, and how it resolves. */
 export interface ImportNameStatus {
+  /**
+   * How this entry is identified in `categoryMap` / `accountMap` — the
+   * composite ("expense:Gifts", "HUF:Cash"), not the bare name. Built by the
+   * server; echo it back, never construct it.
+   *
+   * A name alone is not an identity: one file can use "Gifts" as both an
+   * expense and an income category, and one account name can appear in two
+   * currencies. Keying the map on the name mapped both at once, onto a row of
+   * the wrong kind or currency.
+   */
+  key: string
   name: string
   /** Category only — "expense" | "income". */
   kind?: string
@@ -245,11 +256,33 @@ export interface ImportRowError {
   reason: string
 }
 
+/** One currency the file uses, and how many rows are in it. */
+export interface ImportCurrencyCount {
+  code: string
+  count: number
+}
+
+/**
+ * How many rows use one (category, account) pair.
+ *
+ * The two name counts cannot simply be added to work out what a mapping choice
+ * costs — a row blocked by an unmapped category *and* an unmapped account would
+ * be counted twice, and the screen would claim to skip more rows than the file
+ * has. These let the client take a union instead.
+ */
+export interface ImportGroupCount {
+  categoryKey: string
+  accountKey: string
+  count: number
+}
+
 export interface ImportPreview {
   totalRows: number
   parseErrors: ImportRowError[]
   categories: ImportNameStatus[]
   accounts: ImportNameStatus[]
+  currencies: ImportCurrencyCount[]
+  groups: ImportGroupCount[]
 }
 
 export interface ImportResult {
@@ -257,6 +290,17 @@ export interface ImportResult {
   alreadyImported: number
   parseErrors: ImportRowError[]
   unresolved: ImportRowError[]
+  /**
+   * Rows that resolved but could not be written, because the commit is applied
+   * in batches and one after the first failed. Zero on every ordinary import.
+   *
+   * This arrives on a 200, not an error: the earlier batches are committed, and
+   * calling that a failure would misreport a database that now holds several
+   * thousand new rows. Re-running the same file is safe — the server
+   * de-duplicates on natural keys, so what landed is skipped.
+   */
+  failed: number
+  failureReason?: string
 }
 
 /** Parses the file and reports what it will take to import cleanly. Writes nothing. */
@@ -357,7 +401,17 @@ export interface InstanceSettings {
   changeLogRetentionDays: number
   fxEnabled: boolean
   fxRefreshAt: string
+  /** Ordered — providers are tried in this order, first answer wins. */
   fxProviders: string[]
+  /**
+   * Every provider id the server accepts. Response-only; sending it back
+   * changes nothing. Read this instead of hardcoding the set, or a provider
+   * the frontend has not heard of gets stripped from config.yaml on the next
+   * save.
+   */
+  fxProvidersAvailable: string[]
+  /** Upper bound Validate enforces on sessionTtlDays. Response-only. */
+  sessionTtlDaysMax: number
 }
 
 export const getSettings = () => api.get<InstanceSettings>('/api/admin/settings')
