@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Trash2 } from '@lucide/vue'
 import { computed } from 'vue'
-import { toast } from 'vue-sonner'
+import { useNotifyStore } from '@/stores/notify'
 
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import MoneyAmount from '@/components/monefy/MoneyAmount.vue'
@@ -15,6 +15,7 @@ import type { Row } from '@/sync/types'
 
 const recurring = useRecurringStore()
 const taxonomy = useTaxonomyStore()
+const notify = useNotifyStore()
 
 const categoryOf = (rule: Row) => taxonomy.byId.get(String(rule.categoryId ?? ''))
 const isEmpty = computed(() => recurring.rules.length === 0)
@@ -35,9 +36,7 @@ async function remove(rule: Row) {
   const id = String(rule.id)
 
   await sync.remove('recurring_rule', id)
-  toast('Recurring record deleted', {
-    action: { label: 'Undo', onClick: () => void sync.write('recurring_rule', body, id) },
-  })
+  notify.undo('Recurring record deleted', () => void sync.write('recurring_rule', body, id))
 }
 </script>
 

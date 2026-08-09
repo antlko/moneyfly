@@ -134,8 +134,14 @@ router.beforeEach(async (to) => {
   if (to.name === 'signin' && auth.isSignedIn) {
     return { name: 'home' }
   }
-  if (to.meta.adminOnly && !auth.user?.isAdmin) {
-    return { name: 'home' }
+  if (to.meta.adminOnly) {
+    // Confirmed with the server, not from the cached profile: bootstrap renders
+    // from cache so the ledger paints instantly, but a privilege check must not
+    // ride on that. Without this a demoted account walks onto the screen and
+    // every call on it answers 403 — which reads as the app being broken rather
+    // than as "you are not an admin". One round trip, on admin screens only.
+    await auth.whenChecked()
+    if (!auth.user?.isAdmin) return { name: auth.isSignedIn ? 'home' : 'signin' }
   }
   return true
 })

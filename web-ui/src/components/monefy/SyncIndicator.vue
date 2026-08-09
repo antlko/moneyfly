@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { CloudAlert, CloudCheck, CloudOff, CloudUpload, RefreshCw } from '@lucide/vue'
 import { computed } from 'vue'
-import { toast } from 'vue-sonner'
 
 import { useSyncStore } from '@/stores/sync'
 
@@ -50,7 +49,8 @@ const view = computed(() => {
 /** Tapping syncs now, and says what happened — the point is the answer. */
 async function syncNow() {
   await sync.syncNow()
-  toast(view.value.label)
+  // No toast: this button already *is* the status display, and it updates in
+  // place. Announcing the result in a floating box said the same thing twice.
 }
 </script>
 

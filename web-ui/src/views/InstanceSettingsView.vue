@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import * as http from '@/api/http'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
+import { useNotifyStore } from '@/stores/notify'
 import { CURRENCY_OPTIONS } from '@/lib/currencies'
 
 /**
@@ -36,6 +37,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id
 
+const notify = useNotifyStore()
 const settings = ref<http.InstanceSettings | null>(null)
 const busy = ref(false)
 const message = ref('')
@@ -49,6 +51,7 @@ async function load() {
     settings.value = await http.getSettings()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
+    notify.fromError(e, 'Could not load instance settings')
   }
 }
 
@@ -107,6 +110,7 @@ async function save() {
     message.value = 'Settings saved and applied — no restart needed.'
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
+    notify.fromError(e, 'Could not save instance settings')
   } finally {
     busy.value = false
   }

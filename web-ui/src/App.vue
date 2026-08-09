@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { Toaster } from 'vue-sonner'
-import 'vue-sonner/style.css'
 
+import AppNotifications from '@/components/AppNotifications.vue'
 import DesktopShell from '@/components/desktop/DesktopShell.vue'
 import { useIsDesktop } from '@/lib/breakpoint'
 import { useAuthStore } from '@/stores/auth'
@@ -75,9 +74,9 @@ watch(
   </div>
 
   <!--
-    Toasts sit above the record buttons rather than at the very bottom edge:
-    down there they would cover the two controls the app exists for, and an
-    "Undo" you have to reach around is not an undo.
+    Notices are anchored top-right and every one of them closes. They used to be
+    bottom-centre toasts with no close button, which put an undismissable box
+    over the two record buttons the app exists for. See stores/notify.ts.
   -->
-  <Toaster position="bottom-center" :offset="{ bottom: '7.5rem' }" :duration="4000" rich-colors />
+  <AppNotifications />
 </template>

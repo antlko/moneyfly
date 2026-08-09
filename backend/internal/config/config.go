@@ -199,7 +199,21 @@ const (
 	envAddr         = "MONEYFLY_ADDR"
 	envBaseURL      = "MONEYFLY_BASE_URL"
 	envRegistration = "MONEYFLY_REGISTRATION"
+	EnvAdminEmail   = "MONEYFLY_ADMIN_EMAIL"
 )
+
+// AdminEmail is the account to promote to administrator on startup, or "".
+//
+// Admin is otherwise granted to whoever registers first and can only be handed
+// out by an existing admin — which is a dead end on a real instance: if the
+// first account was a throwaway, or belongs to someone who has left, nobody
+// left can reach Settings → Instance, and every admin action answers 403 with
+// no way to fix it from inside the app. The image is distroless, so there is no
+// shell to run a query in either.
+//
+// Read from the environment rather than config.yaml because it is a recovery
+// lever an operator pulls once, not a setting: set it, restart, unset it.
+func AdminEmail() string { return strings.TrimSpace(os.Getenv(EnvAdminEmail)) }
 
 // EnsureDir creates the config directory if it does not exist.
 func EnsureDir(dir string) error {

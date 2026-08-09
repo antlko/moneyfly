@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Plus, Trash2 } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { toast } from 'vue-sonner'
+import { useNotifyStore } from '@/stores/notify'
 
 import BudgetSheet from '@/components/monefy/BudgetSheet.vue'
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
@@ -14,6 +14,7 @@ import { useTaxonomyStore } from '@/stores/taxonomy'
 import { sync } from '@/sync/engine'
 
 const budgets = useBudgetsStore()
+const notify = useNotifyStore()
 const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
 
@@ -53,9 +54,7 @@ async function remove(entry: BudgetProgress) {
   for (const k of ['id', 'lamport', 'deviceId', 'updatedAt', 'deleted']) delete body[k]
 
   await sync.remove('budget', id)
-  toast('Budget deleted', {
-    action: { label: 'Undo', onClick: () => void sync.write('budget', body, id) },
-  })
+  notify.undo('Budget deleted', () => void sync.write('budget', body, id))
 }
 </script>
 

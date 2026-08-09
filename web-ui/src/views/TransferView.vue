@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ArrowDown } from '@lucide/vue'
 import { computed, ref, watch, watchEffect } from 'vue'
-import { toast } from 'vue-sonner'
 import { useRouter } from 'vue-router'
 
 import AmountDisplay from '@/components/monefy/AmountDisplay.vue'
@@ -70,8 +69,9 @@ watchEffect(() => {
  * 12.34 against a EUR account and switching to HUF displays 12.34 and writes 12.
  * The record screen has the same hazard and the same fix.
  */
+const roundingNote = ref('')
 useClampOnCurrencyChange(currency, calc, ({ before, after, currency: code }) => {
-  toast(`${code} has no minor unit — ${before} rounded to ${after}`)
+  roundingNote.value = `${code} has no minor unit — ${before} rounded to ${after}`
 })
 
 /*
@@ -94,6 +94,7 @@ const valid = computed(
 )
 
 const key = (pressed: Key) => {
+  roundingNote.value = ''
   calc.value = press(calc.value, pressed, exponent(currency.value))
 }
 
@@ -190,6 +191,9 @@ function swap() {
 
       <div class="mt-3">
         <AmountDisplay :amount="amount" :currency="currency" @backspace="key('backspace')" />
+        <p v-if="roundingNote" class="px-4 pt-1 text-center text-xs text-mf-red-text">
+          {{ roundingNote }}
+        </p>
       </div>
 
       <label v-if="crossCurrency" class="mx-3 mt-3 flex items-center gap-2 text-sm">

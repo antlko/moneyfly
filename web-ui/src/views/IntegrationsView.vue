@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { Copy, Download, Trash2 } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
-import { toast } from 'vue-sonner'
 
 import * as http from '@/api/http'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
@@ -28,7 +27,7 @@ async function run(action: () => Promise<unknown>, ok: string) {
 
 async function copy(text: string) {
   await navigator.clipboard.writeText(text)
-  toast('Copied to clipboard')
+  // The button flips to a tick; a floating box saying so as well was noise.
 }
 
 const when = (unix: number) => (unix ? new Date(unix * 1000).toLocaleString() : 'never')

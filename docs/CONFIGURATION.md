@@ -141,8 +141,26 @@ A container can be configured without mounting a config at all.
 | `MONEYFLY_BASE_URL` | public origin | Every load — the only source |
 | `MONEYFLY_LOG_LEVEL` | log level: `debug` \| `info` \| `warn` \| `error` | Startup |
 | `MONEYFLY_REGISTRATION` | `app.registration` | **First boot only**, as a seed |
+| `MONEYFLY_ADMIN_EMAIL` | promotes that account to administrator | Every start, idempotent |
 | `MONEYFLY_OIDC_<ID>_CLIENT_ID` | that provider's `client_id` | Every load |
 | `MONEYFLY_OIDC_<ID>_CLIENT_SECRET` | that provider's `client_secret` | Every load |
+
+### Recovering administrator access
+
+Admin goes to whoever registers first, and only an existing admin can grant it to
+anyone else. That is a dead end if the first account was a throwaway, or belongs to
+someone who has left: every admin action answers `403 admin only`, Settings → Instance
+is unreachable, and the image is distroless so there is no shell to run a query in.
+
+`MONEYFLY_ADMIN_EMAIL` is the way out. Set it to the address of an existing account and
+restart; that account becomes an administrator, and the promotion is logged. It is
+idempotent, so leaving it set does nothing on later restarts, and an address that matches
+no account logs a warning rather than refusing to start — a typo should not turn a
+recoverable situation into an outage.
+
+```
+MONEYFLY_ADMIN_EMAIL=you@example.com
+```
 
 Only non-empty values count — a variable set to the empty string is the same as not setting it, so
 you cannot use one to force a field back to empty. The OIDC variables apply to providers already

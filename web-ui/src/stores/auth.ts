@@ -26,6 +26,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** In-flight bootstrap, so concurrent navigations await one, not several. */
   let inflight: Promise<void> | null = null
+  /** In-flight server check, for the few callers that must not trust the cache. */
+  let checking: Promise<void> | null = null
 
   /**
    * Resolve the current session, and get out of the way.
@@ -76,6 +78,23 @@ export const useAuthStore = defineStore('auth', () => {
     await revalidate()
     ready.value = true
     if (user.value) void sync.start(user.value.id)
+  }
+
+  /**
+   * Wait for the server's answer about this session, not the cached one.
+   *
+   * Rendering from cache is right for the ledger — it is the user's own data and
+   * it is already on the device. It is *not* right for a privilege check: the
+   * cached profile is whatever this device last heard, so an account that has
+   * since been demoted would still walk onto an admin screen and only discover
+   * it when every call there answered 403. Admin routes pay one round trip.
+   */
+  function whenChecked(): Promise<void> {
+    if (checking) return checking
+    checking = revalidate().finally(() => {
+      checking = null
+    })
+    return checking
   }
 
   async function revalidate() {
@@ -166,6 +185,7 @@ export const useAuthStore = defineStore('auth', () => {
     isSignedIn,
     providers,
     bootstrap,
+    whenChecked,
     signIn,
     createAccount,
     signOut,

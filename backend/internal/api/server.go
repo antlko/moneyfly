@@ -93,10 +93,41 @@ func New(configDir string) (*Server, error) {
 	s.app.Use(compress.New(compress.Config{Next: isEventStream}))
 	s.routes()
 
+	s.promoteAdminFromEnv()
+
 	go s.retentionLoop()
 	go s.fxLoop()
 	go s.recurringLoop()
 	return s, nil
+}
+
+// promoteAdminFromEnv grants admin to MONEYFLY_ADMIN_EMAIL, if set.
+//
+// The recovery lever for an instance whose admin account is unreachable — see
+// config.AdminEmail. Deliberately forgiving: an unknown address is a warning,
+// not a failed boot, because the usual way to get one wrong is a typo and
+// refusing to start would turn a recoverable situation into an outage.
+// Idempotent, so leaving the variable set does nothing on later restarts.
+func (s *Server) promoteAdminFromEnv() {
+	email := config.AdminEmail()
+	if email == "" {
+		return
+	}
+	user, err := s.conn().UserByEmail(email)
+	if err != nil {
+		slog.Warn("admin promotion: no account with that address, skipping",
+			"env", config.EnvAdminEmail, "email", email, "error", err)
+		return
+	}
+	if user.IsAdmin {
+		return
+	}
+	if err := s.conn().SetAdmin(user.ID, true); err != nil {
+		slog.Error("admin promotion failed", "email", email, "error", err)
+		return
+	}
+	slog.Info("admin promotion: account promoted to administrator",
+		"email", email, "env", config.EnvAdminEmail)
 }
 
 // eventStreamPath is the one route that must never be compressed.

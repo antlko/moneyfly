@@ -240,6 +240,25 @@ func summariseGroups(rows []importer.Row) []groupCountDTO {
 	return out
 }
 
+// ownedOnly drops mapping entries that name a row this account does not have.
+// See the call site for why an unknown id must not be trusted.
+func ownedOnly(mapping map[string]string, existing []importer.NamedRow) map[string]string {
+	if len(mapping) == 0 {
+		return mapping
+	}
+	owned := make(map[string]bool, len(existing))
+	for _, row := range existing {
+		owned[row.ID] = true
+	}
+	out := make(map[string]string, len(mapping))
+	for key, id := range mapping {
+		if owned[id] {
+			out[key] = id
+		}
+	}
+	return out
+}
+
 func (s *Server) importNames(userID string) (categories, accounts []importer.NamedRow, err error) {
 	cats, err := s.conn().CategoryNames(userID)
 	if err != nil {
@@ -330,8 +349,24 @@ func (s *Server) handleImportCommit(c fiber.Ctx) error {
 		return err
 	}
 
+	// A mapping may only point at a row this account actually owns.
+	//
+	// Nothing else checks it: the resolvers take an override id on trust, so a
+	// client that mapped to an id the server has never seen — one still sitting
+	// in its own outbox, or a stale id from a previous replica — had every one
+	// of those rows written pointing at nothing. Thousands of transactions
+	// belonging to no category, which is worse than the rows being skipped and
+	// invisible until someone opens the dashboard and finds a blank slice.
+	//
+	// Dropping the bad entries rather than failing the request keeps the rest of
+	// the import working, and buildImportOps then reports the affected rows as
+	// unresolved with a reason, which is the contract every other unresolved row
+	// already follows.
+	categoryMap := ownedOnly(in.CategoryMap, existingCategories)
+	accountMap := ownedOnly(in.AccountMap, existingAccounts)
+
 	ops, alreadyImported, unresolved, err := buildImportOps(
-		res.Rows, existingCategories, existingAccounts, in.CategoryMap, in.AccountMap, existingKeys)
+		res.Rows, existingCategories, existingAccounts, categoryMap, accountMap, existingKeys)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Plus, RefreshCw, X } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { toast } from 'vue-sonner'
+import { useNotifyStore } from '@/stores/notify'
 
 import * as http from '@/api/http'
 import CurrencySheet from '@/components/monefy/CurrencySheet.vue'
@@ -16,6 +16,8 @@ import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 
 const dashboard = useDashboardStore()
+const notify = useNotifyStore()
+const notice = ref('')
 const taxonomy = useTaxonomyStore()
 const settings = useSettingsStore()
 const fx = useFxStore()
@@ -51,7 +53,7 @@ async function add(code: string) {
   if (enabled.value.includes(code)) return
   await settings.set(SETTING.currencies, [...declared.value, code].sort())
   if (!(await fx.addQuote(code, dashboard.baseCurrency))) {
-    toast(`No rate for ${code} yet — it will arrive with the next update`)
+    notice.value = `No rate for ${code} yet — it will arrive with the next update`
   }
 }
 
@@ -65,7 +67,7 @@ async function add(code: string) {
 async function remove(code: string) {
   if (code === dashboard.baseCurrency) return
   if (taxonomy.activeAccounts.some((a) => String(a.currency) === code)) {
-    toast(`${code} is in use by an account`)
+    notify.error(`${code} is in use by an account, so it cannot be removed`)
     return
   }
   await settings.set(
@@ -118,13 +120,13 @@ async function saveRate(code: string, { rate, asOf }: { rate: string; asOf: stri
   try {
     await http.fxSetRate(code, rate, asOf)
   } catch (e) {
-    toast(e instanceof Error ? `Could not save the rate: ${e.message}` : 'Could not save the rate')
+    notify.fromError(e, 'Could not save the rate')
     return
   }
   // Pull it straight back into the local cache, because that — not the server —
   // is what every total on the dashboard reads.
   await fx.addQuote(code, dashboard.baseCurrency)
-  toast(`1 ${STORAGE_BASE} = ${rate} ${code}`)
+  notice.value = `1 ${STORAGE_BASE} = ${rate} ${code}`
 }
 
 /**
@@ -160,6 +162,9 @@ const STALE_AFTER_DAYS = 5
     </ScreenHeader>
 
     <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
+      <p v-if="notice" class="mx-4 mt-3 rounded-lg bg-mf-green-soft/40 p-2.5 text-sm">
+        {{ notice }}
+      </p>
       <section class="rounded-2xl bg-mf-surface p-4">
         <h2 class="mb-1 font-medium">Base currency</h2>
         <p class="text-2xl">{{ dashboard.baseCurrency }}</p>

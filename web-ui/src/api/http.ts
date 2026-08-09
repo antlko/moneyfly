@@ -64,6 +64,35 @@ export class NetworkError extends Error {
  */
 const REQUEST_TIMEOUT_MS = 15_000
 
+/**
+ * A human sentence for a status the server did not explain itself.
+ *
+ * Reached when the body is not this API's `{"error": …}` shape — which means
+ * something in front of the app answered: a reverse proxy, a gateway, an auth
+ * layer. Those are exactly the failures an operator most needs named, and
+ * exactly the ones that used to surface as an empty string.
+ */
+function describeStatus(status: number): string {
+  switch (status) {
+    case 400:
+      return 'The server rejected the request (400). If this was a file, it may not be the format this screen expects.'
+    case 401:
+      return 'Not signed in (401).'
+    case 403:
+      return 'Not allowed (403). This action needs an administrator account.'
+    case 404:
+      return 'Not found (404). The server may be running an older version than this app.'
+    case 413:
+      return 'Too large (413). A proxy in front of the app may be limiting the upload size.'
+    case 502:
+    case 503:
+    case 504:
+      return `The server is unreachable behind its proxy (${status}).`
+    default:
+      return `The server returned an error (${status}).`
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
@@ -85,15 +114,22 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     // The server renders every error as {"error": "..."} via its central
-    // ErrorHandler; anything else means we did not reach the API at all.
-    let message = res.statusText
+    // ErrorHandler; anything else means we did not reach the API at all — a
+    // reverse proxy, a gateway, an auth layer in front of it.
+    //
+    // `statusText` cannot be the fallback: it is **always empty over HTTP/2**,
+    // which is what any instance behind a TLS terminator is serving. Falling
+    // back to it produced an empty error message in exactly the deployment
+    // where something had gone wrong, so the app said nothing at all and the
+    // only way to find out what happened was the network tab.
+    let message = ''
     try {
       const data = (await res.json()) as { error?: string }
       if (data.error) message = data.error
     } catch {
-      /* non-JSON body — keep the status text */
+      /* non-JSON body — fall through to the generic description */
     }
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message || describeStatus(res.status))
   }
 
   if (res.status === 204) return undefined as T

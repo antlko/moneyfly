@@ -564,6 +564,78 @@ func TestPreviewGroupsCountEveryRowExactlyOnce(t *testing.T) {
 	}
 }
 
+// A mapping pointing at an id the account does not own must not be trusted.
+// Writing those rows anyway produced transactions belonging to no category —
+// invisible until someone opened the dashboard and found a blank slice.
+func TestImportRejectsAMappingToAnUnknownID(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedAccount(t, s, userID, "acc:cash", "Cash", "EUR")
+
+	csv := importHeader + "19.07.2021,Cash,Utilities,-5,EUR,-5,EUR,\n"
+	// The shape a client produces when its own push has not landed yet.
+	bogus := map[string]string{importer.CategoryKey("Utilities", "expense"): "cat:never-pushed"}
+
+	commit := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, bogus, nil), cookie))
+
+	if commit.Imported != 0 {
+		t.Errorf("imported = %d, want 0 — the row would reference a category that does not exist",
+			commit.Imported)
+	}
+	if len(commit.Unresolved) != 1 {
+		t.Fatalf("unresolved = %+v, want the row reported", commit.Unresolved)
+	}
+
+	snap := decodeBody[snapshotResponse](t, s.do(t, "GET", "/api/sync/snapshot", "", cookie))
+	for _, row := range snap.Rows {
+		if row.Entity == "txn" {
+			t.Fatalf("a dangling transaction was written: %s", row.Data)
+		}
+	}
+}
+
+// …while a mapping to a row the account really owns still works.
+func TestImportAcceptsAMappingToAnOwnedID(t *testing.T) {
+	s := newTestServer(t, "")
+	cookie := signUp(t, s, "a@example.com", "dev-a")
+	userID := userIDFor(t, s, cookie)
+	seedCategory(t, s, userID, "cat:bills", "Bills", "expense")
+	seedAccount(t, s, userID, "acc:cash", "Cash", "EUR")
+
+	csv := importHeader + "19.07.2021,Cash,Utilities,-5,EUR,-5,EUR,\n"
+	good := map[string]string{importer.CategoryKey("Utilities", "expense"): "cat:bills"}
+
+	commit := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, good, nil), cookie))
+	if commit.Imported != 1 {
+		t.Errorf("imported = %d, want 1: %+v", commit.Imported, commit)
+	}
+}
+
+// One account's id must not be usable as another's mapping target.
+func TestImportMappingCannotBorrowAnotherUsersRow(t *testing.T) {
+	s := newTestServer(t, "")
+	a := signUp(t, s, "a@example.com", "dev-a")
+	aID := userIDFor(t, s, a)
+	seedCategory(t, s, aID, "cat:a-secret", "Secret", "expense")
+
+	b := signUp(t, s, "b@example.com", "dev-b")
+	bID := userIDFor(t, s, b)
+	seedAccount(t, s, bID, "acc:b-cash", "Cash", "EUR")
+
+	csv := importHeader + "19.07.2021,Cash,Utilities,-5,EUR,-5,EUR,\n"
+	stolen := map[string]string{importer.CategoryKey("Utilities", "expense"): "cat:a-secret"}
+
+	commit := decodeBody[importCommitResponse](t, s.do(t, "POST", "/api/import/monefy/commit",
+		commitBody(t, csv, stolen, nil), b))
+	if commit.Imported != 0 {
+		t.Errorf("imported = %d, want 0 — that category belongs to another account",
+			commit.Imported)
+	}
+}
+
 // Two accounts on one instance must never see each other's categories or
 // accounts while resolving, the same isolation the ordinary sync path has.
 func TestImportStaysScopedPerUser(t *testing.T) {

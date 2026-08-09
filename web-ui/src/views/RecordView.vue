@@ -2,7 +2,7 @@
 import { LayoutGrid, Repeat, Trash2 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vue-sonner'
+import { useNotifyStore } from '@/stores/notify'
 
 import AccountSheet from '@/components/monefy/AccountSheet.vue'
 import AmountDisplay from '@/components/monefy/AmountDisplay.vue'
@@ -42,6 +42,7 @@ const dashboard = useDashboardStore()
 const taxonomy = useTaxonomyStore()
 const settings = useSettingsStore()
 const recurring = useRecurringStore()
+const notify = useNotifyStore()
 
 /*
  * One screen, two steps — the amount, then the category. Not two routes: going
@@ -132,8 +133,14 @@ const currency = computed(() => String(account.value?.currency ?? dashboard.base
  * so out loud matters when the clamp reaches zero (0.99 in HUF), because a
  * disabled confirm button otherwise looks exactly like that old bug.
  */
+/*
+ * Shown inline under the amount rather than as a floating notice: this is
+ * feedback about the number on screen, so it belongs next to it — and it is
+ * needed most on a phone, where a floating box would sit over the keypad.
+ */
+const roundingNote = ref('')
 useClampOnCurrencyChange(currency, calc, ({ before, after, currency: code }) => {
-  toast(`${code} has no minor unit — ${before} rounded to ${after}`)
+  roundingNote.value = `${code} has no minor unit — ${before} rounded to ${after}`
 })
 
 const amount = computed(() => display(calc.value))
@@ -162,6 +169,7 @@ const title = computed(() => {
 })
 
 function key(pressed: Key) {
+  roundingNote.value = ''
   calc.value = press(calc.value, pressed, exponent(currency.value))
 }
 
@@ -258,7 +266,6 @@ async function record(category: Row) {
   // Deliberately silent when creating: a toast covers the bottom of the
   // dashboard you were just returned to — including the record buttons — and
   // the record is visible on the chart the moment you land.
-  if (editing.value) toast('Record updated')
 
   // Jump to the period the record belongs to, not whichever one happened to be
   // open — recording something dated last week and landing on a chart that does
@@ -282,9 +289,7 @@ async function remove() {
 
   await sync.remove('txn', props.id)
   await router.replace('/')
-  toast('Record deleted', {
-    action: { label: 'Undo', onClick: () => void sync.write('txn', body, props.id) },
-  })
+  notify.undo('Record deleted', () => void sync.write('txn', body, props.id))
 }
 
 async function createCategory(input: {
@@ -338,6 +343,9 @@ function back() {
       @backspace="key('backspace')"
       @pick-account="showAccounts = true"
     />
+      <p v-if="roundingNote" class="px-4 pt-1 text-center text-xs text-mf-red-text">
+        {{ roundingNote }}
+      </p>
 
     <template v-if="step === 'amount'">
       <label class="mx-3 mt-4 mb-3 flex items-center gap-2 border-b border-mf-muted/60 pb-2">

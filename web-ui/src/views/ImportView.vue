@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { FileUp } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { toast } from 'vue-sonner'
 
 import * as http from '@/api/http'
 import type { ImportNameStatus, ImportPreview, ImportResult } from '@/api/http'
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
+import { useNotifyStore } from '@/stores/notify'
 import {
   isSettled,
   planImport,
@@ -34,11 +34,14 @@ const accounts = useAccountsStore()
 const dashboard = useDashboardStore()
 const settings = useSettingsStore()
 const fx = useFxStore()
+const notify = useNotifyStore()
 
 type Step = 'pick' | 'preview' | 'done'
 const step = ref<Step>('pick')
 const busy = ref(false)
 const error = ref('')
+/** Non-blocking note about exchange rates; shown next to the currency section. */
+const rateNote = ref('')
 
 const fileName = ref('')
 const csvText = ref('')
@@ -65,6 +68,7 @@ async function pickFile(e: Event) {
     step.value = 'preview'
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not read that file'
+    notify.fromError(e, 'Could not read that file')
   } finally {
     busy.value = false
     if (fileInput.value) fileInput.value.value = ''
@@ -143,7 +147,7 @@ async function declareCurrencies() {
       return r.status === 'rejected' || r.value === false
     })
     if (missing.length) {
-      toast(`No rate for ${missing.join(', ')} yet — it will arrive with the next update`)
+      rateNote.value = `No rate for ${missing.join(', ')} yet — it will arrive with the next update`
     }
   } finally {
     busy.value = false
@@ -205,6 +209,7 @@ async function createAllMissing() {
     await declareCurrencies()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not create everything'
+    notify.fromError(e, 'Could not create everything')
   } finally {
     busy.value = false
   }
@@ -258,7 +263,7 @@ async function createMappedAccount() {
   if (currency !== dashboard.baseCurrency && !declared.includes(currency)) {
     await settings.set(SETTING.currencies, [...declared, currency].sort())
     if (!(await fx.addQuote(currency, dashboard.baseCurrency))) {
-      toast(`No rate for ${currency} yet — it will arrive with the next update`)
+      rateNote.value = `No rate for ${currency} yet — it will arrive with the next update`
     }
   }
 
@@ -308,6 +313,7 @@ async function commit() {
     step.value = 'done'
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Import failed'
+    notify.fromError(e, 'Import failed')
   } finally {
     busy.value = false
   }
@@ -448,6 +454,7 @@ function startOver() {
           >
             {{ busy ? 'Fetching…' : `Add ${missingCurrencies.join(', ')} and fetch rates` }}
           </button>
+          <p v-if="rateNote" class="mt-2 text-xs text-mf-muted">{{ rateNote }}</p>
         </section>
 
         <section v-if="unresolvedCategories.length" class="rounded-2xl bg-mf-surface p-4">
