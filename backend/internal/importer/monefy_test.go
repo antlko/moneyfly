@@ -41,6 +41,58 @@ func TestParseSample(t *testing.T) {
 	}
 }
 
+// A newer export from the same app, same phone, same account — different
+// date format. This exact shape (no leading zeros, slashes, month-first) is
+// what a real 3,222-row 2026 export used; before dateLayouts grew a second
+// entry, every single row in that file failed with "not DD.MM.YYYY".
+func TestParseAcceptsSlashSeparatedMonthFirstDates(t *testing.T) {
+	csv := header +
+		"7/19/2021,Cash,Bills,-65,UAH,-1.3,EUR,\n" + // single-digit month
+		"12/25/2026,Cash,Bills,-65,EUR,-65,EUR,\n" + // double-digit month
+		"8/9/2026,Cash,Bills,-65,EUR,-65,EUR,\n" // single-digit month and day
+
+	res, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("unexpected row errors: %+v", res.Errors)
+	}
+	want := []string{"2021-07-19", "2026-12-25", "2026-08-09"}
+	for i, w := range want {
+		if got := res.Rows[i].OccurredOn; got != w {
+			t.Errorf("row %d occurredOn = %q, want %q", i, got, w)
+		}
+	}
+}
+
+// "7/19" can only be July 19th — there is no 19th month — which is the actual
+// evidence that a slash-separated Monefy export is month-first, not a
+// convention picked because it seemed likely.
+func TestSlashDatesAreReadMonthFirstNotDayFirst(t *testing.T) {
+	csv := header + "7/19/2021,Cash,Bills,-65,UAH,-65,UAH,\n"
+	res, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0].OccurredOn != "2021-07-19" {
+		t.Fatalf("got %+v, want a single row on 2021-07-19", res.Rows)
+	}
+}
+
+// A genuinely invalid date must still be rejected under either layout, not
+// coerced into whichever one fails to notice.
+func TestParseStillRejectsAnInvalidDate(t *testing.T) {
+	csv := header + "31.13.2021,UAH,Utilities,-65,UAH,-65,UAH,bad date\n"
+	res, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(res.Rows) != 0 || len(res.Errors) != 1 {
+		t.Fatalf("rows=%+v errors=%+v, want the row rejected", res.Rows, res.Errors)
+	}
+}
+
 // The header names `currency` twice. Addressing columns positionally is the
 // whole point — this proves the converted pair (columns 5-6) never leaks into
 // the native one, even when the converted currency differs from the native

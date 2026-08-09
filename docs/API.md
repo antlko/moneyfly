@@ -191,7 +191,7 @@ unrecognised category or account is never guessed at, and `internal/importer` fo
 // preview response
 {
   "totalRows": 1683,
-  "parseErrors": [{ "line": 45, "reason": "date \"31.13.2021\" is not DD.MM.YYYY" }],
+  "parseErrors": [{ "line": 45, "reason": "date \"31.13.2021\" is not a recognised format (DD.MM.YYYY or M/D/YYYY)" }],
   "categories": [
     { "key": "expense:Utilities", "name": "Utilities", "kind": "expense",
       "resolved": false, "count": 119 },

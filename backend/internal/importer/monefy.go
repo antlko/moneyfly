@@ -31,9 +31,37 @@ import (
 	"moneyfly/internal/money"
 )
 
-// dateLayout is Monefy's export format: DD.MM.YYYY, not the M/D/YYYY a
-// careless time.Parse layout would assume.
-const dateLayout = "02.01.2006"
+// dateLayouts are every date format a real Monefy export has been seen to
+// use, tried in order.
+//
+// DD.MM.YYYY (dots) is the original, documented format — verified against a
+// 1,683-row export, see docs/MONEFY-PARITY.md §5. M/D/YYYY (slashes, no
+// leading zeros) showed up in a newer export from the same app: the
+// exporter's date format follows the device's own locale, not anything this
+// app controls, so one layout was never going to cover every install — a
+// real 3,222-row export with today's date on it failed on every single row
+// with "not DD.MM.YYYY" until this was added.
+//
+// Slash-separated is read month-first, not day-first, and that is not a
+// guess: this format's own rows are the evidence. "7/19/2021" cannot be
+// day=7 month=19 — there is no 19th month — so it can only be July 19th. A
+// genuinely day-first slash export, if one ever turns up, needs its own
+// layout added here rather than a guess at which of the two this is.
+var dateLayouts = []string{
+	"02.01.2006", // DD.MM.YYYY
+	"1/2/2006",   // M/D/YYYY
+}
+
+// parseDate tries every known Monefy date format in turn.
+func parseDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	for _, layout := range dateLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("date %q is not a recognised format (DD.MM.YYYY or M/D/YYYY)", s)
+}
 
 // columns is the minimum field count a row must have. Trailing empty fields
 // (an empty description) are sometimes dropped entirely by the exporter, so
@@ -124,9 +152,9 @@ func parseRow(record []string) (*Row, error) {
 	}
 	date, account, category, amountStr, currency := record[0], record[1], record[2], record[3], record[4]
 
-	on, err := time.Parse(dateLayout, strings.TrimSpace(date))
+	on, err := parseDate(date)
 	if err != nil {
-		return nil, fmt.Errorf("date %q is not DD.MM.YYYY", date)
+		return nil, err
 	}
 
 	currency = strings.ToUpper(strings.TrimSpace(currency))

@@ -45,6 +45,20 @@ export const useNotifyStore = defineStore('notify', () => {
     notices.value = notices.value.filter((n) => n.id !== id)
   }
 
+  /**
+   * Drop every error notice. Called on each route navigation.
+   *
+   * An error has no expiry — "an error you did not read is an error you will
+   * hit again" — but that only holds while it stays true. Nothing else ever
+   * cleared one, so a 403 hit once (say, before an account was promoted to
+   * admin) sat pinned to every screen visited afterward, including ones where
+   * every request was now succeeding. A route change is a real signal that the
+   * old error's context is gone; if the new screen fails too, it pushes its own.
+   */
+  function clearErrors() {
+    notices.value = notices.value.filter((n) => n.kind !== 'error')
+  }
+
   function push(notice: Omit<Notice, 'id'>, ttl?: number): number {
     const id = nextId++
     notices.value = [...notices.value, { ...notice, id }]
@@ -81,5 +95,5 @@ export const useNotifyStore = defineStore('notify', () => {
     error(e instanceof Error && e.message ? e.message : fallback)
   }
 
-  return { notices, error, undo, fromError, dismiss }
+  return { notices, error, undo, fromError, dismiss, clearErrors }
 })

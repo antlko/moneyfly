@@ -493,9 +493,10 @@ docs/API.md for what a hand-entered rate then overrides, and for how long.
 
 ## 5. Monefy CSV format
 
-Verified against a real export (`monefy-2023-12-03_03-48-39.csv`, 1,683 rows, 19.07.2021 →
-03.12.2023). This governs both the importer (phase 8) and the Monefy-compatible export profile
-(phase 9).
+Verified against two real exports: `monefy-2023-12-03_03-48-39.csv` (1,683 rows, 19.07.2021 →
+03.12.2023) and a second, newer one (3,222 rows, 7/19/2021 → 8/9/2026) that turned out to use a
+different date format than the first — see the Date row below. This governs both the importer
+(phase 8) and the Monefy-compatible export profile (phase 9).
 
 ```
 date,account,category,amount,currency,converted amount,currency,description
@@ -508,7 +509,7 @@ date,account,category,amount,currency,converted amount,currency,description
 | --- | --- | --- |
 | Encoding | UTF-8 **with BOM** | Strip it or the first header becomes `﻿date`. |
 | Header | `currency` appears **twice** | **Header-name maps are impossible — address columns positionally.** |
-| Date | `DD.MM.YYYY`, dots | Not `M/D/YYYY`. No time component at all. |
+| Date | `DD.MM.YYYY` (dots) **or** `M/D/YYYY` (slashes, no leading zeros) | Not one fixed format — Monefy's exporter follows the device's own locale, and two real exports from the same account used different ones. `parseDate` in `internal/importer/monefy.go` tries both. Slash-separated is read month-first: confirmed by rows like `7/19/2021` in the second export, which cannot be day=7 (there is no 19th month). No time component in either. |
 | Transaction id | none | Dedup must be structural (natural key + occurrence index). |
 | Type column | none | The sign carries it. |
 | Income rows | none in this export | Monefy does not export income here. |

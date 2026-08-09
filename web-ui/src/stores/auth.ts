@@ -72,7 +72,10 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = cached
       ready.value = true
       void sync.start(cached.id)
-      void revalidate()
+      // Through whenChecked(), not a bare revalidate() call, so `checking`
+      // is populated — an admin-route navigation landing moments later reuses
+      // this same in-flight request instead of firing a second, redundant one.
+      void whenChecked()
       return
     }
     await revalidate()

@@ -63,7 +63,21 @@ drift.
 
 Errors: handlers return `fiber.NewError(code, msg)`; the central `errorHandler` renders every one as
 `{"error": msg}`, which is the only shape `ApiError` on the client parses. Unexpected (non-Fiber)
-errors are the only ones logged — a 404 is traffic, not an incident.
+errors are logged in detail there — the real Go error value, not just its rendered message — because
+a 500 from something no handler anticipated is exactly the case an operator needs the most context on.
+
+**Every request also gets one summary line from `requestLogger`, at a level keyed to what happened**:
+Debug for 2xx/3xx, Warn for 4xx, Error for 5xx. This matters because `MONEYFLY_LOG_LEVEL` defaults to
+`info` — before the split, *every* request logged at Debug regardless of outcome, so a stock
+deployment recorded nothing at all for a rejected request: no line, no status, no error, nothing. That
+read as broken logging when it was working exactly as configured, just not logging what anyone needed
+to see. The rejected-request line carries the same message the client received (pulled from the
+`{"error": …}` body's would-be contents, not read back off the response — see `requestLogger`'s own
+doc comment for why it has to be computed from the returned error, since `errorHandler` itself has not
+rendered anything yet by the time `requestLogger`'s post-`c.Next()` code runs) plus the request's byte
+size. That size is the diagnostic: if a request the client genuinely made produces *no* line here, not
+even at Debug, it never reached this process — something in front of it (reverse proxy, tunnel, WAF)
+answered first, which this middleware has no way to see or log.
 
 ## 3. Background workers
 

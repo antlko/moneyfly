@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
+import { useNotifyStore } from '@/stores/notify'
 import DashboardView from '@/views/DashboardView.vue'
 
 /**
@@ -125,6 +126,11 @@ const router = createRouter({
  * /signin and lose the page the user was on.
  */
 router.beforeEach(async (to) => {
+  // Each screen starts with a clean slate — an error from a screen you have
+  // since left is not information about the one you are looking at now. See
+  // notify.ts's clearErrors for the failure this fixes.
+  useNotifyStore().clearErrors()
+
   const auth = useAuthStore()
   await auth.bootstrap()
 

@@ -312,7 +312,17 @@ running the dev servers.
   `make icons`. The maskable variant is separately centred on the mark's *visual* centre (~300,260),
   not the canvas centre.
 - **Logging** is slog JSON to stdout; prefer `slog.InfoContext(c.Context(), …)` with key/value attrs.
-  Level via `MONEYFLY_LOG_LEVEL` (debug|info|warn|error).
+  Level via `MONEYFLY_LOG_LEVEL` (debug|info|warn|error), defaulting to `info`.
+- **A request's own summary line (`requestLogger`, `middleware.go`) is leveled by outcome, not fixed
+  at debug.** 5xx is Error, 4xx is Warn, everything else stays Debug — the first two are visible under
+  the deployed *default* level, which used to log every request at Debug regardless of status, so a
+  stock instance recorded nothing at all for a rejected request. The status and message it logs are
+  computed from the `error` `c.Next()` returned (`errorHandlerWillRender`, mirroring `errorHandler`'s
+  own classification), never read back off `c.Response()` — by the time this middleware's post-`Next`
+  code runs, `errorHandler` has not rendered anything onto it yet, since Fiber only invokes it after
+  every `app.Use()` middleware, requestLogger included, has already returned. Reading the response
+  object here sees whatever was on it *before* the error, not what the client is about to receive; a
+  400 read this way logs as 200. See docs/ARCHITECTURE.md §2.
 
 ## Legal boundary
 

@@ -132,14 +132,90 @@ func (s *Server) currentUser(c fiber.Ctx) *db.User {
 // requestLogger logs one line per request. It deliberately logs the route path
 // rather than the raw URL so query strings (which may carry filters) stay out of
 // the logs.
+//
+// A rejected request (4xx/5xx) logs at a level visible under the *default*
+// MONEYFLY_LOG_LEVEL (info) — everything else stays at debug, which is what
+// keeps ordinary traffic quiet. Before this, every request logged at debug
+// regardless of outcome, so a stock deployment (info by default) recorded
+// nothing at all for a failed request — no line, no error, nothing — which
+// read as "the logging is broken" when it was actually working exactly as
+// configured, just not logging what anyone needed to see.
+//
+// If a request the client genuinely made produces *no* line here, not even at
+// debug, it never reached this process: something in front of it — a reverse
+// proxy, a tunnel, a WAF — answered first. That is the one failure mode this
+// middleware cannot see or log, and it is worth checking for specifically
+// when a report of a rejected request matches nothing in these logs at all.
 func (s *Server) requestLogger(c fiber.Ctx) error {
 	start := time.Now()
+	requestBytes := len(c.Body())
 	err := c.Next()
-	slog.DebugContext(c.Context(), "request",
+
+	status, message := errorHandlerWillRender(err)
+	if err == nil {
+		// The handler already wrote its own response directly (c.JSON, c.Send,
+		// c.Status...), synchronously, before returning — so unlike the error
+		// path below, the real status is already sitting on the response.
+		status = c.Response().StatusCode()
+	}
+
+	attrs := []any{
 		"method", c.Method(),
 		"path", c.Path(),
-		"status", c.Response().StatusCode(),
+		"status", status,
 		"duration_ms", time.Since(start).Milliseconds(),
-	)
+		"request_bytes", requestBytes,
+	}
+	if message != "" {
+		attrs = append(attrs, "error", message)
+	}
+
+	switch level := levelFor(status); level {
+	case slog.LevelError:
+		slog.ErrorContext(c.Context(), "request failed", attrs...)
+	case slog.LevelWarn:
+		slog.WarnContext(c.Context(), "request rejected", attrs...)
+	default:
+		slog.DebugContext(c.Context(), "request", attrs...)
+	}
 	return err
+}
+
+// levelFor is the status->level rule on its own, so it can be checked without
+// standing up a server: 5xx is Error, 4xx is Warn (both visible under the
+// deployed default of MONEYFLY_LOG_LEVEL=info), everything else stays Debug.
+func levelFor(status int) slog.Level {
+	switch {
+	case status >= fiber.StatusInternalServerError:
+		return slog.LevelError
+	case status >= fiber.StatusBadRequest:
+		return slog.LevelWarn
+	default:
+		return slog.LevelDebug
+	}
+}
+
+// errorHandlerWillRender predicts the status and message errorHandler is
+// about to write for err, without waiting for it to actually happen.
+//
+// This has to duplicate errorHandler's own classification rather than read
+// the rendered response, because of *when* requestLogger runs relative to it:
+// errorHandler is invoked by Fiber's own dispatcher only once every
+// app.Use()-registered middleware — this one included — has already returned
+// from its own call to c.Next(). By that point c.Response() still holds
+// whatever was on it *before* the error, not what the client is about to
+// receive. Classifying err directly is what a middleware positioned here can
+// actually see truthfully; querying the response object for it cannot.
+func errorHandlerWillRender(err error) (status int, message string) {
+	if err == nil {
+		return 0, ""
+	}
+	var fe *fiber.Error
+	if errors.As(err, &fe) {
+		return fe.Code, fe.Message
+	}
+	// Mirrors errorHandler's own default for a non-fiber.Error — an unexpected
+	// error never leaks its own text to the client, only to the server log
+	// (via errorHandler's separate, detailed "unhandled error" line).
+	return fiber.StatusInternalServerError, "internal server error"
 }
