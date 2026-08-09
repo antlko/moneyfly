@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { browserSupportsWebAuthn } from '@simplewebauthn/browser'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import * as http from '@/api/http'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
+import { platform } from '@/lib/device'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -21,7 +23,26 @@ const linkable = computed(() =>
   auth.providers.filter((p) => !auth.user?.identities.some((i) => i.provider === p.id)),
 )
 
-onMounted(loadDevices)
+/*
+ * The passkey section is hidden entirely when it could not work — this browser
+ * has no WebAuthn, or this instance has no relying party configured — rather
+ * than shown with a button that always fails. Unlike the providers section
+ * above it is not gated on anything being configured *per provider*: passkeys
+ * are a capability, not a list.
+ */
+const passkeySupported = browserSupportsWebAuthn()
+const canUsePasskeys = computed(
+  () => passkeySupported && (auth.health?.webauthnEnabled ?? false),
+)
+
+const passkeys = ref<http.Passkey[]>([])
+const newPasskeyName = ref(platform())
+const addingPasskey = ref(false)
+
+onMounted(async () => {
+  await loadDevices()
+  await loadPasskeys()
+})
 
 async function loadDevices() {
   try {
@@ -30,6 +51,35 @@ async function loadDevices() {
     error.value = e instanceof Error ? e.message : String(e)
   }
 }
+
+async function loadPasskeys() {
+  if (!canUsePasskeys.value) return
+  try {
+    passkeys.value = await http.listPasskeys()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function addPasskey() {
+  addingPasskey.value = true
+  try {
+    await run(async () => {
+      await auth.registerPasskey(newPasskeyName.value.trim() || platform())
+      await loadPasskeys()
+      newPasskeyName.value = platform()
+    }, 'Passkey added. You can now sign in with it.')
+  } finally {
+    addingPasskey.value = false
+  }
+}
+
+const removePasskey = (id: string) =>
+  run(async () => {
+    await http.deletePasskey(id)
+    await loadPasskeys()
+    await auth.refresh()
+  }, 'Passkey removed.')
 
 async function run(action: () => Promise<unknown>, ok: string) {
   message.value = ''
@@ -148,6 +198,47 @@ const when = (unix: number) => (unix ? new Date(unix * 1000).toLocaleString() : 
         >
           Link {{ p.name }}
         </a>
+      </section>
+
+      <section v-if="canUsePasskeys" class="rounded-2xl bg-mf-surface p-4">
+        <h2 class="mb-1 font-medium">Passkeys</h2>
+        <p class="mb-3 text-sm text-mf-muted">
+          Sign in with your fingerprint, face or device PIN instead of a password. Each device you
+          add gets its own — removing one here never affects the others.
+        </p>
+
+        <ul class="mb-3 space-y-3">
+          <li v-for="k in passkeys" :key="k.id" class="flex items-start justify-between text-sm">
+            <div>
+              <p>{{ k.name }}</p>
+              <p class="text-xs text-mf-muted">
+                Added {{ when(k.createdAt) }} ·
+                {{ k.lastUsedAt ? `last used ${when(k.lastUsedAt)}` : 'never used' }}
+              </p>
+            </div>
+            <button type="button" class="text-mf-red-text" @click="removePasskey(k.id)">
+              Remove
+            </button>
+          </li>
+          <li v-if="!passkeys.length" class="text-sm text-mf-muted">No passkeys yet.</li>
+        </ul>
+
+        <form class="flex items-center gap-2" @submit.prevent="addPasskey">
+          <input
+            v-model="newPasskeyName"
+            type="text"
+            placeholder="Name this device"
+            maxlength="60"
+            class="min-w-0 flex-1 rounded-lg border border-mf-muted/60 bg-mf-bg px-3 py-1.5 text-sm outline-none focus:border-mf-green"
+          />
+          <button
+            type="submit"
+            :disabled="addingPasskey"
+            class="shrink-0 rounded-full border border-mf-green px-4 py-1.5 text-sm text-mf-green-dark disabled:opacity-50"
+          >
+            {{ addingPasskey ? 'Waiting…' : 'Add a passkey' }}
+          </button>
+        </form>
       </section>
 
       <section class="rounded-2xl bg-mf-surface p-4">

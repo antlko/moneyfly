@@ -9,13 +9,36 @@ import (
 
 // UserDTO is the signed-in account, as the SPA sees it.
 type UserDTO struct {
-	ID           string        `json:"id"`
-	Email        string        `json:"email"`
-	DisplayName  string        `json:"displayName"`
-	BaseCurrency string        `json:"baseCurrency"`
-	IsAdmin      bool          `json:"isAdmin"`
-	HasPassword  bool          `json:"hasPassword"`
-	Identities   []IdentityDTO `json:"identities"`
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"displayName"`
+	BaseCurrency string `json:"baseCurrency"`
+	IsAdmin      bool   `json:"isAdmin"`
+	HasPassword  bool   `json:"hasPassword"`
+	// HasPasskey reports whether any passkey is registered, not how many — the
+	// UI only ever asks "is there another way in", the same question
+	// HasPassword answers. The list itself is a separate, authenticated call.
+	HasPasskey bool          `json:"hasPasskey"`
+	Identities []IdentityDTO `json:"identities"`
+}
+
+// WebAuthnCredentialDTO is one registered passkey, as the Account screen lists
+// them. The public key and attestation are deliberately absent: nothing in the
+// UI has a use for either, and they are the parts worth not handing out.
+type WebAuthnCredentialDTO struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	CreatedAt  int64  `json:"createdAt"`
+	LastUsedAt int64  `json:"lastUsedAt"`
+}
+
+func toWebAuthnCredentialDTO(c db.WebAuthnCredential) WebAuthnCredentialDTO {
+	return WebAuthnCredentialDTO{
+		ID:         c.ID,
+		Name:       c.Name,
+		CreatedAt:  c.CreatedAt,
+		LastUsedAt: c.LastUsedAt,
+	}
 }
 
 // IdentityDTO is one linked identity provider. The provider's subject id is
@@ -57,7 +80,7 @@ type DeviceDTO struct {
 	Current    bool   `json:"current"`
 }
 
-func toUserDTO(u *db.User, ids []db.Identity) UserDTO {
+func toUserDTO(u *db.User, ids []db.Identity, hasPasskey bool) UserDTO {
 	out := UserDTO{
 		ID:           u.ID,
 		Email:        u.Email,
@@ -65,6 +88,7 @@ func toUserDTO(u *db.User, ids []db.Identity) UserDTO {
 		BaseCurrency: u.BaseCurrency,
 		IsAdmin:      u.IsAdmin,
 		HasPassword:  u.PasswordHash != "",
+		HasPasskey:   hasPasskey,
 		Identities:   make([]IdentityDTO, 0, len(ids)),
 	}
 	for _, i := range ids {

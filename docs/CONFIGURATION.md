@@ -36,7 +36,7 @@ Not a section of `config.yaml` any more. Set these as environment variables:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MONEYFLY_ADDR` | `:5007` | Listen address. |
-| `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin, e.g. `https://money.example.com`. **Required once any OIDC provider is configured** — the provider must be handed an absolute redirect URI. |
+| `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin, e.g. `https://money.example.com`. **Required once any OIDC provider is configured** — the provider must be handed an absolute redirect URI — and **required for passkeys**, whose relying-party id is derived from its hostname the same way. Unset means `webauthnEnabled: false` and no passkey button; password and OIDC sign-in are unaffected. |
 
 The default port is 5007 rather than the usual 8080: on a machine that self-hosts
 anything at all, 8080 is already taken, and the failure mode is a container that

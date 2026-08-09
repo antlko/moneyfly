@@ -93,7 +93,7 @@ the domain rows are untouched.
 ## 4. Identity
 
 Multi-user: several independent people on one instance, data isolated by `user_id`. Sign-in is
-either email + password (argon2id) or any configured OIDC provider. Sessions are opaque 256-bit
+email + password (argon2id), any configured OIDC provider, or a passkey. Sessions are opaque 256-bit
 tokens in an HttpOnly, SameSite=Lax cookie, stored **hashed** — a database leak must not yield a
 working cookie.
 
@@ -117,8 +117,34 @@ claimed email is an account-takeover route whenever the provider does not verify
 the user is told to sign in with their password and link from settings. This is the one place where
 the obvious behaviour is the wrong one.
 
-Unlinking refuses to remove the last way in (`db.ErrLastSignInMethod`): an account with no password
-and no identities is unreachable, and a self-hosted instance has no support desk.
+Unlinking refuses to remove the last way in (`db.ErrLastSignInMethod`): an account with no password,
+no identities and no passkeys is unreachable, and a self-hosted instance has no support desk. That
+guard is `countSignInMethods` in `internal/db/identities.go`, and it has to span all three tables at
+once — two independent checks, each seeing only its own, would each let the account's last way in go
+while the other looked safe.
+
+### How a passkey sign-in resolves to an account
+
+Nothing like the OIDC ladder above, and deliberately so: **there is no create-an-account path**. A
+passkey is added from Account settings by someone already signed in, so registration answers "which
+account?" before the ceremony starts, and sign-in has only one case —
+
+1. the assertion carries a user handle, which *is* the account id → sign that account in.
+
+The handle is `db.User.ID`'s raw UUID bytes (`webAuthnUser.WebAuthnID`), so resolving it is a plain
+`UserByID` — never an email, never a claim from a third party. That is why none of step 3's
+email-collision caution applies here: this instance issued the credential, and a credential it did
+not issue names nothing.
+
+Sign-in is discoverable ("usernameless"): no email is collected and no credential list is returned,
+so `/api/auth/webauthn/login/options` answers identically whether or not any account exists.
+
+The relying-party id is derived **once at startup** from `server.base_url` (`auth.NewWebAuthn`),
+never per-request. `RPOrigins` is the allowlist the library checks the browser-asserted origin
+against, so building it from an incoming request's own Host would compare a value with itself; and a
+credential is permanently bound to the id it was created under, so an id that varied by request would
+strand every passkey the moment it changed. No public URL configured means no relying party, which
+means `webauthnEnabled: false` and no passkey button — password and OIDC sign-in are unaffected.
 
 ### Root manages the others
 

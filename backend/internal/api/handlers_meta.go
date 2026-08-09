@@ -42,5 +42,9 @@ func (s *Server) handleHealth(c fiber.Ctx) error {
 		"claimed":             users > 0,
 		"defaultCurrency":     cfg.App.DefaultCurrency,
 		"oidcProviders":       providers,
+		// Whether to offer the passkey button at all. Derived, not configured:
+		// passkeys need a public URL to bind credentials to (see
+		// auth.NewWebAuthn), so this is false until server.base_url is set.
+		"webauthnEnabled": s.webAuthn() != nil,
 	})
 }

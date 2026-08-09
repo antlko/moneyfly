@@ -1,3 +1,4 @@
+import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
@@ -134,6 +135,35 @@ export const useAuthStore = defineStore('auth', () => {
     void sync.start(user.value.id)
   }
 
+  /**
+   * Sign in with a passkey — usernameless, so there is no email to collect.
+   *
+   * Same effects as signIn: the browser prompt resolves to an account the
+   * server names, and from there this is an ordinary session.
+   */
+  async function signInWithPasskey() {
+    const { sessionId, publicKey } = await http.passkeyLoginOptions()
+    const credential = await startAuthentication({ optionsJSON: publicKey })
+    user.value = await http.passkeyLoginVerify(sessionId, credential, deviceId(), platform())
+    await db.setMeta(META_PROFILE, user.value)
+    void sync.start(user.value.id)
+  }
+
+  /**
+   * Register a passkey for the account already signed in.
+   *
+   * Unlike signIn this does not change who is signed in, so it re-reads the
+   * profile rather than replacing it — the only thing that changed server-side
+   * is hasPasskey.
+   */
+  async function registerPasskey(name: string) {
+    const { sessionId, publicKey } = await http.passkeyRegisterOptions()
+    const credential = await startRegistration({ optionsJSON: publicKey })
+    const created = await http.passkeyRegisterVerify(sessionId, name, credential)
+    await refresh()
+    return created
+  }
+
   async function createAccount(email: string, password: string, displayName?: string) {
     user.value = await http.register(credentials(email, password, displayName))
     // A newly claimed instance stops offering registration to the next visitor.
@@ -190,6 +220,8 @@ export const useAuthStore = defineStore('auth', () => {
     bootstrap,
     whenChecked,
     signIn,
+    signInWithPasskey,
+    registerPasskey,
     createAccount,
     signOut,
     refresh,

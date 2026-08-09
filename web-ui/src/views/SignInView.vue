@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { browserSupportsWebAuthn } from '@simplewebauthn/browser'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -22,6 +23,39 @@ const canRegister = computed(() => auth.health?.registrationAllowed ?? false)
 const unclaimed = computed(() => auth.health?.claimed === false)
 
 const mode = ref<'signin' | 'register'>('signin')
+
+/*
+ * Whether to offer the passkey button at all.
+ *
+ * Three conditions, each ruling out a button that could only fail: this browser
+ * has the API, this instance has a relying party configured, and we are signing
+ * in rather than creating an account — a passkey is added to an account that
+ * exists, so there is nothing for it to do in register mode.
+ *
+ * Checked once, not per render: browserSupportsWebAuthn only looks at whether
+ * the API exists, which cannot change while the page is open.
+ */
+const passkeySupported = browserSupportsWebAuthn()
+const canUsePasskey = computed(
+  () => passkeySupported && mode.value === 'signin' && (auth.health?.webauthnEnabled ?? false),
+)
+
+async function signInWithPasskey() {
+  error.value = ''
+  busy.value = true
+  try {
+    await auth.signInWithPasskey()
+    const next = typeof route.query.next === 'string' ? route.query.next : '/'
+    await router.replace(next)
+  } catch (e) {
+    // Dismissing the system prompt throws too, and that is not a failure worth
+    // shouting about — the person simply changed their mind.
+    if (e instanceof Error && e.name === 'NotAllowedError') return
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
+}
 
 onMounted(() => {
   if (unclaimed.value) mode.value = 'register'
@@ -126,10 +160,26 @@ async function submit() {
         {{ mode === 'register' ? 'Create account' : 'Sign in' }}
       </button>
 
-      <template v-if="auth.providers.length">
+      <template v-if="canUsePasskey || auth.providers.length">
         <div class="flex items-center gap-3 text-xs text-mf-muted">
           <span class="h-px flex-1 bg-mf-muted/40" />or<span class="h-px flex-1 bg-mf-muted/40" />
         </div>
+
+        <!--
+          A button, not a link: a passkey ceremony is a JavaScript call to the
+          authenticator, not a navigation, so unlike the providers below there
+          is nowhere to send the browser.
+        -->
+        <button
+          v-if="canUsePasskey"
+          type="button"
+          :disabled="busy"
+          class="rounded-full border border-mf-green py-2.5 text-center font-medium text-mf-green-dark disabled:opacity-50"
+          @click="signInWithPasskey"
+        >
+          Sign in with a passkey
+        </button>
+
         <!--
           A link, not a fetch: the provider redirects the browser back to our
           callback, which is what sets the session cookie.

@@ -7,6 +7,13 @@
  * the sync engine owns retrying.
  */
 
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/browser'
+
 import type { Rate } from '@/lib/fx'
 import type { Op, PullResponse, PushResponse, SnapshotResponse } from '@/sync/types'
 
@@ -170,6 +177,12 @@ export interface Health {
   claimed: boolean
   defaultCurrency: string
   oidcProviders: OidcProvider[]
+  /**
+   * Whether this instance can do passkeys at all. Derived server-side from
+   * whether it has a public URL to bind credentials to, so the sign-in screen
+   * can hide the button rather than offer one that would always fail.
+   */
+  webauthnEnabled: boolean
 }
 
 export interface Identity {
@@ -186,7 +199,31 @@ export interface User {
   baseCurrency: string
   isAdmin: boolean
   hasPassword: boolean
+  /** Whether any passkey is registered — not how many. The list is a separate call. */
+  hasPasskey: boolean
   identities: Identity[]
+}
+
+/** One registered passkey, as the Account screen lists them. */
+export interface Passkey {
+  id: string
+  name: string
+  createdAt: number
+  /** 0 until it has been used to sign in. */
+  lastUsedAt: number
+}
+
+/**
+ * A started passkey ceremony: the challenge for the browser, and the id that
+ * threads it back to the matching verify call.
+ *
+ * `publicKey` is passed straight to @simplewebauthn/browser — its shape is the
+ * W3C JSON encoding, which is exactly what that library expects and what
+ * go-webauthn emits, so nothing translates between them.
+ */
+export interface PasskeyChallenge<T> {
+  sessionId: string
+  publicKey: T
 }
 
 export interface Device {
@@ -221,6 +258,42 @@ export const unlinkIdentity = (id: string) => api.del<void>(`/api/auth/identitie
 
 export const getDevices = () => api.get<Device[]>('/api/devices')
 export const forgetDevice = (id: string) => api.del<void>(`/api/devices/${id}`)
+
+// --- Passkeys ---------------------------------------------------------------------
+//
+// Each ceremony is two calls: `options` issues a challenge, `verify` checks the
+// browser's answer, threaded by the sessionId the first returns. These are
+// plain transport, like everything else here — the browser API calls that go
+// between them live in stores/auth.ts, because this module deliberately has no
+// side effects beyond fetch.
+
+export const passkeyRegisterOptions = () =>
+  api.post<PasskeyChallenge<PublicKeyCredentialCreationOptionsJSON>>(
+    '/api/auth/webauthn/register/options',
+  )
+
+export const passkeyRegisterVerify = (
+  sessionId: string,
+  name: string,
+  credential: RegistrationResponseJSON,
+) => api.post<Passkey>('/api/auth/webauthn/register/verify', { sessionId, name, credential })
+
+export const passkeyLoginOptions = () =>
+  api.post<PasskeyChallenge<PublicKeyCredentialRequestOptionsJSON>>(
+    '/api/auth/webauthn/login/options',
+  )
+
+export const passkeyLoginVerify = (
+  sessionId: string,
+  credential: AuthenticationResponseJSON,
+  deviceId: string,
+  platform: string,
+) =>
+  api.post<User>('/api/auth/webauthn/login/verify', { sessionId, credential, deviceId, platform })
+
+export const listPasskeys = () => api.get<Passkey[]>('/api/auth/webauthn/credentials')
+export const deletePasskey = (id: string) =>
+  api.del<void>(`/api/auth/webauthn/credentials/${id}`)
 
 // --- Sync (see docs/SYNC.md) ------------------------------------------------------
 

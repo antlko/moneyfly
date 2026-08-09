@@ -18,10 +18,41 @@ services:
       # volume and you have backed up everything.
       - moneyfly-config:/config
     environment:
+      # debug | info | warn | error. `info` already shows every rejected
+      # request — 4xx at warn, 5xx at error, each carrying the same message the
+      # client got — so `debug` is only needed to see *successful* requests too.
       MONEYFLY_LOG_LEVEL: info
-      # Required once OIDC providers are configured — it is the origin the
-      # provider redirects back to.
+
+      # The origin people actually reach this instance on, scheme included.
+      #
+      # Uncomment and set it to enable two things that both need to know the
+      # real public origin:
+      #   * OIDC — the provider redirects back here, so it must be absolute;
+      #   * passkeys — a credential is permanently bound to this hostname.
+      #
+      # Leave it unset and both stay off; password sign-in is unaffected. Set it
+      # wrong and passkeys registered against the old value stop working, so
+      # pick the final URL before anyone registers one.
       # MONEYFLY_BASE_URL: https://money.example.com
+
+      # Sets registration on the *first* boot only, then config.yaml owns it and
+      # this is never read again — change it later under Settings → Instance.
+      #
+      # `closed` still allows your own first account, so setting it here is how
+      # a publicly reachable instance comes up already claimed-by-you rather
+      # than open to whoever finds the URL first.
+      # MONEYFLY_REGISTRATION: closed
+
+      # Recovery lever, not a setting: promotes this account to administrator on
+      # startup. Admin normally goes to whoever registers first and can only be
+      # granted by an existing admin — which is a dead end if that account was a
+      # throwaway or belongs to someone who has left, since the image has no
+      # shell to fix it from.
+      #
+      # Set it, restart once, then comment it out again. It is idempotent, so
+      # leaving it set does nothing on later restarts, and an address matching
+      # no account logs a warning rather than refusing to start.
+      # MONEYFLY_ADMIN_EMAIL: you@example.com
 
 volumes:
   moneyfly-config:

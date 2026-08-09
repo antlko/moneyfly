@@ -85,19 +85,19 @@ func (d *DB) IdentitiesForUser(userID string) ([]Identity, error) {
 
 // DeleteIdentity unlinks a provider from an account.
 //
-// It refuses to remove the last way in: an account with no password and no
-// identities would be permanently unreachable, and there is no support desk to
-// recover it.
+// It refuses to remove the last way in: an account with no password, no
+// identities and no passkeys would be permanently unreachable, and there is no
+// support desk to recover it.
 func (d *DB) DeleteIdentity(userID, identityID string) error {
 	u, err := d.UserByID(userID)
 	if err != nil {
 		return err
 	}
-	ids, err := d.IdentitiesForUser(userID)
+	n, err := d.countSignInMethods(u)
 	if err != nil {
 		return err
 	}
-	if u.PasswordHash == "" && len(ids) <= 1 {
+	if n <= 1 {
 		return ErrLastSignInMethod
 	}
 
@@ -109,6 +109,36 @@ func (d *DB) DeleteIdentity(userID, identityID string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// countSignInMethods reports how many independent ways u has to sign in: a
+// password counts as one, plus one per linked identity, plus one per registered
+// passkey.
+//
+// Shared by DeleteIdentity above and DeleteWebAuthnCredential (webauthn.go),
+// which both refuse to go below one. It lives here, spanning three tables,
+// because the guard is only correct when it can see all of them at once — when
+// it only knew about passwords and identities, adding passkeys would have let
+// someone delete their only identity while holding a passkey (fine) *and* also
+// delete their only passkey while holding no identity (not fine), each check
+// blind to the other. Any future sign-in method has to be counted here too, or
+// its own last-row deletion will not be refused.
+func (d *DB) countSignInMethods(u *User) (int, error) {
+	n := 0
+	if u.PasswordHash != "" {
+		n++
+	}
+	ids, err := d.IdentitiesForUser(u.ID)
+	if err != nil {
+		return 0, err
+	}
+	n += len(ids)
+
+	passkeys, err := d.CountWebAuthnCredentials(u.ID)
+	if err != nil {
+		return 0, err
+	}
+	return n + passkeys, nil
 }
 
 // ErrLastSignInMethod is returned when unlinking would lock the account out.

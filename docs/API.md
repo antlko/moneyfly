@@ -33,7 +33,8 @@ methods to offer, what currency to default to.
   "defaultCurrency": "EUR",
   "oidcProviders": [               // id and name only — never client ids or secrets
     { "id": "google", "name": "Google" }
-  ]
+  ],
+  "webauthnEnabled": true          // passkeys need a public URL — see MONEYFLY_BASE_URL
 }
 ```
 
@@ -56,11 +57,46 @@ Sessions are an HttpOnly cookie (`moneyfly_session`). `deviceId` is minted by th
 | `GET` | `/api/devices` | session | `Device[]`, scoped to the account. |
 | `DELETE` | `/api/devices/:id` | session | 204. Drops the sync cursor, so that browser re-bootstraps if it returns. |
 
+### Passkeys
+
+**Call, don't navigate** — the mirror image of the OIDC rows above. A passkey ceremony is a
+JavaScript call to the authenticator, so there is nowhere to send the browser; these are ordinary
+JSON endpoints and the client drives `navigator.credentials` between them.
+
+Each ceremony is two calls: `options` issues a challenge, `verify` checks the answer, threaded by the
+`sessionId` the first returns. That challenge is single-use and deleted the moment it is looked up,
+expired or not, so a captured response cannot be replayed. `publicKey` and `credential` are the W3C
+JSON shapes — exactly what `@simplewebauthn/browser` produces and consumes, with no translation on
+either side.
+
+Sign-in is **usernameless**: no email is sent, no credential list is returned, and the account is
+resolved from the user handle inside the assertion itself. Registration needs a session, because a
+passkey is added to an account that already exists — there is no create-an-account-with-a-passkey
+path, so none of the OIDC email-collision reasoning applies here.
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/webauthn/register/options` | session | → `{sessionId, publicKey}`. Already-registered credentials are excluded, so an authenticator says "you already have one" instead of quietly making a second. 503 when `webauthnEnabled` is false. |
+| `POST` | `/api/auth/webauthn/register/verify` | session | `{sessionId, name, credential}` → the new passkey. 400 on an expired, forged, or another account's challenge; 409 if this authenticator is already registered. |
+| `POST` | `/api/auth/webauthn/login/options` | — | → `{sessionId, publicKey}`. Answers identically whether or not any account exists. 503 when `webauthnEnabled` is false. |
+| `POST` | `/api/auth/webauthn/login/verify` | — | `{sessionId, credential, deviceId, platform}` → `User`, and a session cookie — the same result as `/api/auth/login`. 401 on every failure, with one message, for the same reason password sign-in has one. |
+| `GET` | `/api/auth/webauthn/credentials` | session | `Passkey[]` — id, name, timestamps. Never the public key or attestation. |
+| `DELETE` | `/api/auth/webauthn/credentials/:id` | session | 204. 409 if it is the only sign-in method left, the same guard unlinking an identity has. |
+
+The two management routes above are deliberately **not** gated on `webauthnEnabled`: a passkey that
+is already registered must stay visible and removable even if the instance's public URL is later
+unset, exactly as an OIDC identity stays linked after its provider leaves the config.
+
+```jsonc
+// Passkey
+{ "id": "0199…", "name": "iPhone", "createdAt": 1785000000, "lastUsedAt": 0 }
+```
+
 ```jsonc
 // User
 {
   "id": "0199…", "email": "you@example.com", "displayName": "You",
-  "baseCurrency": "EUR", "isAdmin": true, "hasPassword": true,
+  "baseCurrency": "EUR", "isAdmin": true, "hasPassword": true, "hasPasskey": true,
   "identities": [{ "id": "…", "provider": "google", "email": "…", "createdAt": 1785000000 }]
 }
 ```

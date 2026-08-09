@@ -125,7 +125,11 @@ func (s *Server) handleMe(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(toUserDTO(user, ids))
+	passkeys, err := s.conn().CountWebAuthnCredentials(user.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(toUserDTO(user, ids, passkeys > 0))
 }
 
 // handleChangePassword sets or replaces the password.
@@ -176,7 +180,10 @@ func (s *Server) handleListIdentities(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(toUserDTO(userLocal(c), ids).Identities)
+	// hasPasskey is false rather than looked up: only .Identities is read out
+	// of the result, so counting passkeys here would be a query for a field
+	// this response never contains.
+	return c.JSON(toUserDTO(userLocal(c), ids, false).Identities)
 }
 
 func (s *Server) handleDeleteIdentity(c fiber.Ctx) error {
@@ -248,7 +255,11 @@ func (s *Server) startSession(c fiber.Ctx, user *db.User, deviceID, platform str
 	if err != nil {
 		return err
 	}
-	return c.JSON(toUserDTO(user, ids))
+	passkeys, err := database.CountWebAuthnCredentials(user.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(toUserDTO(user, ids, passkeys > 0))
 }
 
 func (s *Server) setSessionCookie(c fiber.Ctx, token string, ttl time.Duration) {

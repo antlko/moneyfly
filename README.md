@@ -61,8 +61,9 @@ docker run -d --name moneyfly -p 5007:5007 -v moneyfly-config:/config ghcr.io/an
 
 ### Option B — Docker Compose
 
-Save this as `docker-compose.yml` (or copy [the one in this repo](docker-compose.yml)) and run
-`docker compose up -d`:
+Save this as `docker-compose.yml` and run `docker compose up -d`. Nothing below is required —
+[the copy in this repo](docker-compose.yml) is the same thing with every optional environment
+variable listed and annotated, including the one that turns on passkeys:
 
 ```yaml
 services:
@@ -180,7 +181,7 @@ documented in **[docs/SYNC.md](docs/SYNC.md)**. The short version:
   current row plus a cursor, then follows only the deltas after that. A device that's been offline
   longer than retention gets a `409 resync required` on its next pull and re-bootstraps the same
   way.
-- **What does *not* sync.** Three tables sit deliberately outside the op-log, because none of them
+- **What does *not* sync.** Some tables sit deliberately outside the op-log, because none of them
   is a domain row that belongs on every device:
   - **Exchange rates** (`fx_rate`) — a fact about the world, not about a user. The server fetches
     them from providers once a day; every client pulls the same table read-only over plain REST
@@ -188,9 +189,13 @@ documented in **[docs/SYNC.md](docs/SYNC.md)**. The short version:
   - **Integrations** (`api_token`, `webhook`) — a token or a webhook secret describes how *this
     account* is reached from outside. It's held once, in the server's SQLite, and never replicated
     to a device.
-  - **`config.yaml`** — instance infrastructure: listen address, OIDC providers, the FX provider
-    chain. It's a file a human edits on the server; there's deliberately no API endpoint that even
-    reads it back, let alone syncs it.
+  - **Passkeys** (`webauthn_credential`) — a way *into* an account, not something it owns. Each one
+    is bound to the device that created it, so replicating it would be meaningless as well as
+    unwise; add a separate passkey per device instead.
+  - **`config.yaml`** — instance infrastructure: OIDC providers, the FX provider chain, retention.
+    It's a file a human edits on the server; there's deliberately no API endpoint that even reads
+    it back, let alone syncs it. (The listen address and public URL are not in it at all — those
+    come from the environment, so no value is settable from two places at once.)
 
 ## Configuration
 
@@ -198,7 +203,7 @@ Everything lives in one **config directory**, mounted at `/config` in Docker:
 
 ```
 /config
-├── config.yaml     # infrastructure only: listen address, base URL, OIDC, FX, retention
+├── config.yaml     # infrastructure only: OIDC, FX, retention (transport is env-only)
 └── moneyfly.db     # users, sessions, devices, every domain row, sync log — SQLite
 ```
 
@@ -214,9 +219,10 @@ and `oidc` are file-or-environment only and need a restart. Every field is docum
 | --- | --- | --- |
 | `MONEYFLY_CONFIG_DIR` | `/config` | Where `config.yaml`, the database and exports live. |
 | `MONEYFLY_ADDR` | `:5007` | Listen address (`host:port`). |
-| `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin. Required once an OIDC provider is configured. |
+| `MONEYFLY_BASE_URL` | *empty* | Externally reachable origin, scheme included. Required for OIDC (the provider redirects back to it) **and for passkeys** (a credential is permanently bound to its hostname). Unset means both are simply not offered. |
 | `MONEYFLY_REGISTRATION` | `open` | Sets registration **on first boot only**, then `config.yaml` owns it (change it later under Settings → Instance). `closed` still allows your own first account, so setting it here is how a public instance comes up already locked down. |
-| `MONEYFLY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `MONEYFLY_ADMIN_EMAIL` | *empty* | Promotes that account to administrator on startup, then can be removed. The way back in when the admin account is unreachable — see [Recovering admin access](docs/CONFIGURATION.md#recovering-administrator-access). |
+| `MONEYFLY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. `info` already logs every rejected request with the reason; `debug` adds the successful ones. |
 
 The listen address and public origin come from the environment only — they are not fields in
 `config.yaml`, so nothing is settable from two places at once. Everything under `app`, `sync` and
@@ -265,7 +271,7 @@ including how to test sync between two devices, are in [docs/DEVELOPMENT.md](doc
 | Phase | | |
 | --- | --- | --- |
 | 0 | Skeleton — build, serve, embed | ✅ |
-| 1 | Accounts: password + OIDC sign-in | ✅ |
+| 1 | Accounts: password, OIDC and passkey sign-in | ✅ |
 | 2 | Sync engine (offline-first op-log) | ✅ |
 | 3 | Monefy dashboard and record screens | ✅ |
 | 4 | Accounts, transfers, search, periods | ✅ |

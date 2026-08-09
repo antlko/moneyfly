@@ -67,7 +67,9 @@ being applied differently on the two sides, which is the bug `docs/SYNC.md` §2 
 
 **Service workers require HTTPS or `localhost`.** Over `http://192.168.x.x` the browser will not
 offer "Add to Home Screen" and offline mode will not work — this is the single most common way to
-waste an afternoon here.
+waste an afternoon here. **Passkeys need the same thing** for the same underlying reason (a secure
+context), so the one fix unblocks both — worth knowing, because "Add to Home Screen is missing" and
+"the passkey button does nothing" look like two unrelated problems and are not.
 
 Options, easiest first:
 
@@ -175,6 +177,34 @@ the import screen's mapping step is exercised on the very first try. The behavio
 protect — a category that never resolves must never be silently dropped or auto-created — is the
 regression the table in `internal/importer/monefy_test.go` runs on every `go test`, so treat that file,
 not manual clicking, as the source of truth when changing resolution rules.
+
+## Checking passkeys locally
+
+Passkeys need two things: a secure context (see "Testing the PWA on a real phone" above) and a
+`MONEYFLY_BASE_URL` for the relying-party id to come from. `localhost` counts as secure, so the
+quickest local check is:
+
+```bash
+MONEYFLY_BASE_URL=http://localhost:5007 ./moneyfly --config-dir ./config
+```
+
+Confirm the instance is offering them at all:
+
+```bash
+curl -s localhost:5007/api/health | grep -o '"webauthnEnabled":[a-z]*'
+```
+
+`false` means the relying party did not build — either `MONEYFLY_BASE_URL` is unset, or it is set to
+something that will not parse, which is logged as a warning at startup rather than stopping the
+instance.
+
+Then, in the browser: Settings → Passkeys → **Add a passkey**, accept the platform prompt, sign out,
+and use **Sign in with a passkey** — no email needed, the browser offers the credential and the
+account is resolved from it.
+
+The **rp id is the hostname**, so a passkey registered against `localhost` will not work against a
+tailnet name or a real domain, and vice versa. That is the protocol working as intended, not a bug;
+register a fresh one per origin you test from.
 
 ## Checking a webhook locally
 

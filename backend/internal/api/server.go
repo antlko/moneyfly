@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	recovermw "github.com/gofiber/fiber/v3/middleware/recover"
@@ -35,6 +36,9 @@ type Server struct {
 	cfg       *config.Config
 	database  *db.DB
 	oidc      *auth.OIDCRegistry
+	// webauthn is nil when server.base_url is unset or unparseable — passkeys
+	// are then simply not offered, and password/OIDC sign-in is unaffected.
+	webauthn *webauthn.WebAuthn
 
 	app   *fiber.App
 	webFS fs.FS
@@ -71,6 +75,7 @@ func New(configDir string) (*Server, error) {
 		cfg:       cfg,
 		database:  database,
 		oidc:      newOIDCRegistry(cfg),
+		webauthn:  newWebAuthn(cfg),
 		webFS:     web.FS(),
 		indexETag: indexETag(web.FS()),
 		logins:    newLoginLimiter(),
@@ -154,6 +159,25 @@ func isEventStream(c fiber.Ctx) bool { return skipCompression(c.Path()) }
 
 func skipCompression(path string) bool { return path == eventStreamPath }
 
+// newWebAuthn builds the passkey relying party, or returns nil to leave
+// passkeys switched off.
+//
+// Both "not configured" and "configured wrongly" are nil rather than a startup
+// failure: a self-hosted instance with no public URL yet still has to boot and
+// let someone sign in with a password to set one. The malformed case is logged
+// so it does not look like the feature is simply missing.
+func newWebAuthn(cfg *config.Config) *webauthn.WebAuthn {
+	if cfg.Server.BaseURL == "" {
+		return nil
+	}
+	wa, err := auth.NewWebAuthn(cfg.Server.BaseURL, "moneyfly")
+	if err != nil {
+		slog.Warn("webauthn: passkeys are disabled", "error", err)
+		return nil
+	}
+	return wa
+}
+
 func newOIDCRegistry(cfg *config.Config) *auth.OIDCRegistry {
 	providers := make([]auth.ProviderConfig, 0, len(cfg.OIDC))
 	for _, p := range cfg.OIDC {
@@ -202,6 +226,18 @@ func (s *Server) routes() {
 	app.Put("/api/auth/password", authed, s.handleChangePassword)
 	app.Get("/api/auth/identities", authed, s.handleListIdentities)
 	app.Delete("/api/auth/identities/:id", authed, s.handleDeleteIdentity)
+
+	// Passkeys. Each ceremony is two calls — `options` issues a challenge,
+	// `verify` checks the browser's answer to it — threaded by the sessionId
+	// the first returns. Sign-in is public and usernameless; registration
+	// requires a session, because a passkey is added to an account that
+	// already exists rather than creating one.
+	app.Post("/api/auth/webauthn/register/options", authed, s.handleWebAuthnRegisterOptions)
+	app.Post("/api/auth/webauthn/register/verify", authed, s.handleWebAuthnRegisterVerify)
+	app.Post("/api/auth/webauthn/login/options", s.handleWebAuthnLoginOptions)
+	app.Post("/api/auth/webauthn/login/verify", s.handleWebAuthnLoginVerify)
+	app.Get("/api/auth/webauthn/credentials", authed, s.handleListWebAuthnCredentials)
+	app.Delete("/api/auth/webauthn/credentials/:id", authed, s.handleDeleteWebAuthnCredential)
 	app.Get("/api/devices", authed, s.handleListDevices)
 	app.Delete("/api/devices/:id", authed, s.handleDeleteDevice)
 
@@ -361,6 +397,13 @@ func (s *Server) providers() *auth.OIDCRegistry {
 	return s.oidc
 }
 
+// webAuthn returns the passkey relying party, or nil when passkeys are off.
+func (s *Server) webAuthn() *webauthn.WebAuthn {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.webauthn
+}
+
 // --- Background ----------------------------------------------------------------
 
 // retentionLoop sweeps expired sessions and abandoned OIDC authorisations.
@@ -386,6 +429,9 @@ func (s *Server) runRetention() {
 	}
 	if err := database.DeleteExpiredOIDCState(now); err != nil {
 		slog.Error("retention: delete oidc state", "error", err)
+	}
+	if err := database.DeleteExpiredWebAuthnSessions(now); err != nil {
+		slog.Error("retention: delete webauthn sessions", "error", err)
 	}
 
 	// Trimming the journal costs a long-absent device a full re-bootstrap, never
