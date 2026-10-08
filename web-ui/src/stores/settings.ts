@@ -60,4 +60,6 @@ export const SETTING = {
    * which account is "current" rather than each keeping its own idea.
    */
   lastAccount: 'record.lastAccount',
+  /** How the desktop dashboard draws "By category": 'pie' or 'bars'. */
+  desktopChart: 'view.desktopChart',
 } as const

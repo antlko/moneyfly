@@ -266,6 +266,11 @@ func (s *Server) routes() {
 	// handlers_import.go.
 	app.Post("/api/import/monefy/preview", authed, s.handleImportPreview)
 	app.Post("/api/import/monefy/commit", authed, s.handleImportCommit)
+	// Taking data back out — tombstones through the op path, see
+	// handlers_erase.go.
+	app.Get("/api/imports", authed, s.handleListImports)
+	app.Delete("/api/imports/:id", authed, s.handleUndoImport)
+	app.Post("/api/data/erase", authed, s.handleErase)
 
 	// Integrations. Tokens and webhooks are never synced — both are
 	// integration secrets, same as fx_rate and OIDC client secrets

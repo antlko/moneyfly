@@ -40,8 +40,30 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     // Called again after every sync revision, in case the first attempt ran
     // before the replica arrived. Once there is anything to see, stop asking.
     if (seeded) return
+    // Tombstones count here: someone who deleted every category on purpose
+    // has not got an empty replica, and must not have the defaults pushed back.
+    await seed(baseCurrency, (table) => table.count())
+    seeded = true
+  }
 
-    if ((await db.category.count()) === 0) {
+  /**
+   * Put the starting categories and Cash account back after "erase
+   * everything" (Settings → Data), which leaves nothing but tombstones.
+   *
+   * Counts live rows only — the one difference from `ensureSeeded`. Rewriting
+   * the fixed default ids is safe: the local clock has already passed the
+   * erase's tombstones by the time this runs (the caller syncs first), so these
+   * writes win, and two devices doing it at once still collapse by id.
+   */
+  async function restoreDefaults(baseCurrency: string): Promise<void> {
+    await seed(baseCurrency, (table) => table.where('deleted').equals(0).count())
+  }
+
+  async function seed(
+    baseCurrency: string,
+    count: (table: typeof db.category) => Promise<number>,
+  ): Promise<void> {
+    if ((await count(db.category)) === 0) {
       for (const [index, seed] of DEFAULT_CATEGORIES.entries()) {
         await sync.write(
           'category',
@@ -58,7 +80,7 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
       }
     }
 
-    if ((await db.account.count()) === 0) {
+    if ((await count(db.account)) === 0) {
       await sync.write(
         'account',
         {
@@ -73,7 +95,6 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
         DEFAULT_ACCOUNT_ID,
       )
     }
-    seeded = true
   }
 
   return {
@@ -84,5 +105,6 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     activeAccounts,
     byId,
     ensureSeeded,
+    restoreDefaults,
   }
 })

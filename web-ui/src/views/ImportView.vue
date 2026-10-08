@@ -309,7 +309,12 @@ async function commit() {
      * request anyway, not an ordinary write.
      */
     await sync.sync()
-    result.value = await http.importMonefyCommit(csvText.value, categoryMap.value, accountMap.value)
+    result.value = await http.importMonefyCommit(
+      csvText.value,
+      categoryMap.value,
+      accountMap.value,
+      fileName.value,
+    )
     step.value = 'done'
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Import failed'

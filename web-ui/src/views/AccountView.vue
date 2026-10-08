@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import * as http from '@/api/http'
+import DataSection from '@/components/monefy/DataSection.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { platform } from '@/lib/device'
 import { useAuthStore } from '@/stores/auth'
@@ -258,6 +259,8 @@ const when = (unix: number) => (unix ? new Date(unix * 1000).toLocaleString() : 
           </li>
         </ul>
       </section>
+
+      <DataSection />
 
       <button
         type="button"

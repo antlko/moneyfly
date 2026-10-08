@@ -518,6 +518,30 @@ date,account,category,amount,currency,converted amount,currency,description
 | `description` | may be empty, quoted, or have trailing spaces | Trim for display, keep raw for the natural key. |
 | Locale | older exports are Russian (`Наличные`, `Счета`) | Categories and accounts get renamed across exports; resolve through an alias table. |
 
+### The export
+
+`internal/exporter/profile_monefy.go` writes this format back out, and people feed it to their own
+scripts — so it matches the real file **byte for byte** where this app holds the same data, not just
+column for column. Verified by importing the 3,292-row export above and exporting it again: every row
+identical in date, account, category, amount, currency and description, and in the same position.
+`TestMonefyProfileWritesMonefysExactBytes` pins the rules:
+
+| Property | Monefy writes | So the export |
+| --- | --- | --- |
+| Encoding / lines | UTF-8 with BOM, CRLF | writes the BOM and CRLF |
+| Date | device locale: `10/7/2026` or `07.10.2026` | `monefy` = M/D/YYYY (newer exports), `monefy-dmy` = DD.MM.YYYY |
+| Amount | `-2694`, `-397.3`, `-12.45` — no trailing zeros, no grouping | the same (`plainDecimal`) |
+| Converted amount + currency | every row in the phone's base currency, at **one fixed rate per currency**, **truncated to 3 decimals** | every row in the user's base currency at the rate **on the record's day**, rounded once at the base currency's exponent (the dashboard's own rule). With the same rates the figures differ only where Monefy has a third decimal — at most 0.005 a row, 0.11 EUR over all 3,292 rows of the reference file |
+| Order | grouped by account, oldest first within each | the same; ties on a day in the order they were written |
+| Quoting | only when needed — **including trailing whitespace** (`"Studing "`) | the same; `encoding/csv` would not quote trailing whitespace, hence the hand-written writer |
+| Transfers | none | left out: a row's sign is all that says spending or income, and a transfer is neither |
+
+What cannot round-trip: the importer trims names and descriptions, so `"Studing "` comes back out as
+`Studing`. And a record older than the first exchange rate the instance has keeps its own currency
+in the converted columns (with `X-Moneyfly-Unconverted` counting them) — the instance fetches today's
+rates, never history. Entering Monefy's own fixed rates by hand, dated before the first record,
+reproduces its converted column.
+
 ### The failure this design exists to prevent
 
 A naive importer that looks up hardcoded category names lost **≈237 of 1,683 rows (14%)** silently:

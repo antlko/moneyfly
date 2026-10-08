@@ -280,6 +280,21 @@ type importCommitRequest struct {
 	// unresolved and what the operator picked a target for.
 	CategoryMap map[string]string `json:"categoryMap"`
 	AccountMap  map[string]string `json:"accountMap"`
+	// FileName is only a label for the import in the list Settings shows, so
+	// one can be told from another when undoing it.
+	FileName string `json:"fileName"`
+}
+
+// maxImportFileName bounds the stored label; it is client-supplied text.
+const maxImportFileName = 200
+
+// truncate cuts s to at most n runes, never through the middle of one.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 type importCommitResponse struct {
@@ -365,10 +380,19 @@ func (s *Server) handleImportCommit(c fiber.Ctx) error {
 	categoryMap := ownedOnly(in.CategoryMap, existingCategories)
 	accountMap := ownedOnly(in.AccountMap, existingAccounts)
 
+	// Every row this run writes carries the batch id, so the whole import can
+	// be undone as a unit (handlers_erase.go). The batch is recorded before the
+	// rows, so no row ever names a batch that does not exist.
+	importID := db.NewID()
 	ops, alreadyImported, unresolved, err := buildImportOps(
-		res.Rows, existingCategories, existingAccounts, categoryMap, accountMap, existingKeys)
+		res.Rows, existingCategories, existingAccounts, categoryMap, accountMap, existingKeys, importID)
 	if err != nil {
 		return err
+	}
+	if len(ops) > 0 {
+		if err := s.conn().CreateImportBatch(importID, user.ID, truncate(in.FileName, maxImportFileName)); err != nil {
+			return err
+		}
 	}
 
 	accepted, lastSeq, applyErr := applyInChunks(
@@ -423,6 +447,7 @@ func buildImportOps(
 	existingCategories, existingAccounts []importer.NamedRow,
 	categoryMap, accountMap map[string]string,
 	existingKeys map[string]bool,
+	importID string,
 ) (ops []syncproto.Op, alreadyImported int, unresolved []parseErrorDTO, err error) {
 	// Initialised, never nil: a Go nil slice marshals to JSON `null`, and the
 	// client's type says this is always an array — an import with nothing
@@ -477,6 +502,7 @@ func buildImportOps(
 			"accountId":   acc.ID,
 			"note":        row.Note,
 			"naturalKey":  naturalKey,
+			"importId":    importID,
 		})
 		if marshalErr != nil {
 			return nil, 0, nil, marshalErr

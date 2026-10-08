@@ -109,8 +109,10 @@ const removeWebhook = (id: string) =>
       <section class="rounded-2xl bg-mf-surface p-4">
         <h2 class="mb-1 font-medium">Export</h2>
         <p class="mb-3 text-sm text-mf-muted">
-          Every transaction, as CSV. The Monefy profile matches the format that app exports, so it
-          can be read back in either direction.
+          Every transaction, as CSV. The Monefy profile writes exactly what that app's own export
+          writes — same encoding, columns, number format and order, with the converted amount in your
+          base currency — so a script that reads Monefy's file reads this one. Transfers are left out,
+          as Monefy does.
         </p>
         <div class="flex gap-3">
           <a
@@ -128,6 +130,11 @@ const removeWebhook = (id: string) =>
             Monefy CSV
           </a>
         </div>
+        <p class="mt-2 text-xs text-mf-muted">
+          Dates are M/D/YYYY, as in newer Monefy exports.
+          <a :href="http.exportCsvUrl('monefy-dmy')" class="text-mf-green-dark underline">Monefy CSV with DD.MM.YYYY dates</a>
+          for the older style.
+        </p>
       </section>
 
       <!-- API tokens -->

@@ -221,7 +221,7 @@ unrecognised category or account is never guessed at, and `internal/importer` fo
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/import/monefy/preview` | `{csv}` → parse only, nothing written |
-| `POST` | `/api/import/monefy/commit` | `{csv, categoryMap, accountMap}` → writes what resolves |
+| `POST` | `/api/import/monefy/commit` | `{csv, categoryMap, accountMap, fileName?}` → writes what resolves |
 
 ```jsonc
 // preview response
@@ -297,6 +297,40 @@ landed would be lost. Instead `imported` is what was written, `failed` is what w
 `failureReason` carries the underlying error. Re-running the identical file is the fix and is always
 safe: natural-key de-duplication skips everything that already landed.
 
+## Undo an import, erase data
+
+Behind Settings → Data. All three require a session and act only on the caller's own rows. Both
+removals are tombstones written through the op path, so every device learns of them like any other
+delete — but with an empty body, so the rows' natural keys are forgotten and **the same CSV can be
+imported again afterwards**. See [SYNC.md §2 "Deletes"](SYNC.md) for why and for the lamport they
+are written at.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/imports` | Imports that still have live records, newest first |
+| `DELETE` | `/api/imports/:id` | Tombstone every live record that import wrote. 404 for an id the caller does not own |
+| `POST` | `/api/data/erase` | `{scope}` — `"records"`: every transaction; `"everything"`: transactions, recurring rules, budgets, accounts, categories. Settings (`user_setting`) are never erased |
+
+```jsonc
+// GET /api/imports
+[
+  { "id": "01a11ad4-…", "fileName": "monefy.csv", "createdAt": 1791451464, "rows": 1683 },
+  // Rows imported before imports were tracked: a "csv:" natural key, no importId.
+  { "id": "legacy", "fileName": "", "createdAt": 1780000000, "rows": 412, "legacy": true }
+]
+
+// DELETE /api/imports/:id and POST /api/data/erase
+{ "deleted": 1683, "failed": 0 }
+```
+
+Each commit that writes anything records an `import_batch` row (server-only, never synced) and stamps
+`importId` into every transaction it writes; `rows` is counted live from `txn`, so a record deleted
+by hand is already gone from it and a fully removed import drops off the list. Accounts and
+categories an import needed are never removed by undoing it — they were created on a device, by the
+person, and may hold other records. Like commit, a removal that fails part way through is a 200 with
+`failed` and `failureReason` set; running it again is safe. `"everything"` leaves the client with no
+categories, so the client restores the defaults afterwards (`taxonomy.restoreDefaults`).
+
 ## API tokens
 
 A named, long-lived credential for scripted access — `Authorization: Bearer <token>` against any
@@ -331,11 +365,18 @@ and on a multi-user instance "someone" is not necessarily the operator.
 
 ## Export
 
-`GET /api/export/transactions.csv?profile=native|monefy` streams every live transaction as CSV,
-`Content-Disposition: attachment`. `native` is this app's own shape (`date,kind,account,category,
-amount,currency,note`); `monefy` matches the positional format [MONEFY-PARITY.md §5](MONEFY-PARITY.md)
-documents, so a file this produces reads back through this app's own importer or opens in Monefy
-itself. An unknown `profile` is `400`. See `internal/exporter` for adding a third shape.
+`GET /api/export/transactions.csv?profile=native|monefy|monefy-dmy` streams every live transaction
+as CSV, `Content-Disposition: attachment`. `native` is this app's own shape (`date,kind,account,
+category,amount,currency,note`). `monefy` reproduces Monefy's own export byte for byte wherever this
+app holds the same data — see [MONEFY-PARITY.md §5 "The export"](MONEFY-PARITY.md) for every rule —
+with M/D/YYYY dates; `monefy-dmy` is the same with DD.MM.YYYY. Both read back through this app's own
+importer. An unknown `profile` is `400`. See `internal/exporter` for adding another shape.
+
+Every Monefy-profile row has its converted amount in the user's base currency, priced at the rate on
+the record's own day. A row with no rate on or before its day keeps its own amount and currency in
+those two columns instead, and the response carries `X-Moneyfly-Unconverted: <count>` so a script
+can tell. Entering a rate by hand with an old `asOf` (`PUT /api/fx/rates`) covers every later day
+that has no fetched rate.
 
 ## Admin
 

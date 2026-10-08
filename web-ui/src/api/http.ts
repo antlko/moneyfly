@@ -439,7 +439,47 @@ export const importMonefyCommit = (
   csv: string,
   categoryMap: Record<string, string>,
   accountMap: Record<string, string>,
-) => api.post<ImportResult>('/api/import/monefy/commit', { csv, categoryMap, accountMap })
+  fileName = '',
+) =>
+  api.post<ImportResult>('/api/import/monefy/commit', { csv, categoryMap, accountMap, fileName })
+
+// --- Taking data back out (Settings → Data) -----------------------------------------
+
+/** One committed CSV import that still has live records. */
+export interface ImportBatch {
+  id: string
+  fileName: string
+  /** Unix seconds. */
+  createdAt: number
+  /** How many of its records are still live — not how many it originally wrote. */
+  rows: number
+  /** Records imported before imports were tracked one by one; removable only together. */
+  legacy?: boolean
+}
+
+/**
+ * What an undo or erase removed. Like `ImportResult`, a partial failure is a
+ * 200 with `failed` set — what landed has landed, and running it again is safe.
+ */
+export interface EraseResult {
+  deleted: number
+  failed: number
+  failureReason?: string
+}
+
+/** `records` = every transaction; `everything` adds accounts, categories, budgets, recurring. */
+export type EraseScope = 'records' | 'everything'
+
+/** Imports that can still be undone, newest first. */
+export const listImports = () => api.get<ImportBatch[]>('/api/imports')
+
+/**
+ * Remove every record one import wrote. Forgets them, too: running the same
+ * file again imports them afresh instead of skipping them as already imported.
+ */
+export const undoImport = (id: string) => api.del<EraseResult>(`/api/imports/${encodeURIComponent(id)}`)
+
+export const eraseData = (scope: EraseScope) => api.post<EraseResult>('/api/data/erase', { scope })
 
 // --- Integrations ------------------------------------------------------------------
 
@@ -477,7 +517,7 @@ export const deleteWebhook = (id: string) => api.del<void>(`/api/webhooks/${id}`
  * `<a href>`), not a fetch: the response already carries
  * `Content-Disposition: attachment`, so the browser does the rest.
  */
-export const exportCsvUrl = (profile: 'native' | 'monefy') =>
+export const exportCsvUrl = (profile: 'native' | 'monefy' | 'monefy-dmy') =>
   `/api/export/transactions.csv?profile=${profile}`
 
 // --- Admin (root manages the others) ------------------------------------------------

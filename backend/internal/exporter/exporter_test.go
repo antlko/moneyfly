@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,8 +11,8 @@ import (
 
 func TestRegistryListsBothProfiles(t *testing.T) {
 	ids := IDs()
-	if len(ids) != 2 || ids[0] != "monefy" || ids[1] != "native" {
-		t.Fatalf("IDs() = %v, want [monefy native] (sorted)", ids)
+	if len(ids) != 3 || ids[0] != "monefy" || ids[1] != "monefy-dmy" || ids[2] != "native" {
+		t.Fatalf("IDs() = %v, want [monefy monefy-dmy native] (sorted)", ids)
 	}
 	for _, id := range ids {
 		if _, ok := Get(id); !ok {
@@ -62,19 +63,96 @@ func TestNativeProfileWrite(t *testing.T) {
 	}
 }
 
-func TestMonefyProfileMatchesTheDocumentedFormat(t *testing.T) {
+// The exact bytes Monefy's own exporter writes, reproduced from a real
+// 3,292-row export (docs/MONEFY-PARITY.md §5) with the personal details
+// replaced: BOM, CRLF, M/D/YYYY with no leading zeros, amounts with no
+// trailing zeros, every converted figure in the base currency, rows grouped by
+// account and oldest first within each, and a field quoted only when it has
+// to be — including for trailing whitespace, which encoding/csv would not.
+// Scripts are written against that file; this one has to read the same.
+func TestMonefyProfileWritesMonefysExactBytes(t *testing.T) {
+	rows := []Row{
+		{OccurredOn: "2021-07-19", AccountName: "UAH", CategoryName: "Food", AmountMinor: -6500, Currency: "UAH",
+			ConvertedMinor: -130, ConvertedCurrency: "EUR"},
+		{OccurredOn: "2023-12-03", AccountName: "HUF", CategoryName: "Communication", AmountMinor: -1000, Currency: "HUF",
+			ConvertedMinor: -260, ConvertedCurrency: "EUR"},
+		{OccurredOn: "2023-12-03", AccountName: "EUR", CategoryName: "Eating out", AmountMinor: -1000, Currency: "EUR",
+			ConvertedMinor: -1000, ConvertedCurrency: "EUR", Note: "pizza "},
+		{OccurredOn: "2024-01-15", AccountName: "EUR", CategoryName: "Studing ", AmountMinor: -39730, Currency: "EUR",
+			ConvertedMinor: -39730, ConvertedCurrency: "EUR", Note: `books, "used"`},
+		// Moved between accounts: not spending, so not in the file at all.
+		{OccurredOn: "2024-01-16", AccountName: "EUR", AmountMinor: -5000, Currency: "EUR", Transfer: true,
+			ConvertedMinor: -5000, ConvertedCurrency: "EUR"},
+		{OccurredOn: "2024-02-01", AccountName: "EUR", CategoryName: "Salary", AmountMinor: 250000, Currency: "EUR",
+			ConvertedMinor: 250000, ConvertedCurrency: "EUR"},
+		{OccurredOn: "2026-10-07", AccountName: "UAH", CategoryName: "Taxi", AmountMinor: -1245, Currency: "UAH",
+			ConvertedMinor: -25, ConvertedCurrency: "EUR"},
+		// No rate known for the day: the original figure, never a guess.
+		{OccurredOn: "2026-10-07", AccountName: "UAH", CategoryName: "Food", AmountMinor: -100, Currency: "UAH"},
+	}
+	want := "\xEF\xBB\xBF" +
+		"date,account,category,amount,currency,converted amount,currency,description\r\n" +
+		"12/3/2023,EUR,Eating out,-10,EUR,-10,EUR,\"pizza \"\r\n" +
+		"1/15/2024,EUR,\"Studing \",-397.3,EUR,-397.3,EUR,\"books, \"\"used\"\"\"\r\n" +
+		"2/1/2024,EUR,Salary,2500,EUR,2500,EUR,\r\n" +
+		"12/3/2023,HUF,Communication,-1000,HUF,-2.6,EUR,\r\n" +
+		"7/19/2021,UAH,Food,-65,UAH,-1.3,EUR,\r\n" +
+		"10/7/2026,UAH,Taxi,-12.45,UAH,-0.25,EUR,\r\n" +
+		"10/7/2026,UAH,Food,-1,UAH,-1,UAH,\r\n"
+
 	var buf bytes.Buffer
 	p, _ := Get("monefy")
-	if err := p.Write(&buf, sampleRows); err != nil {
+	if err := p.Write(&buf, rows); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	if lines[0] != "date,account,category,amount,currency,converted amount,currency,description" {
-		t.Errorf("header = %q, want the exact positional header docs/MONEFY-PARITY.md §5 documents", lines[0])
+	if got := buf.String(); got != want {
+		gotLines, wantLines := strings.Split(got, "\n"), strings.Split(want, "\n")
+		for i := range max(len(gotLines), len(wantLines)) {
+			var g, w string
+			if i < len(gotLines) {
+				g = gotLines[i]
+			}
+			if i < len(wantLines) {
+				w = wantLines[i]
+			}
+			if g != w {
+				t.Errorf("line %d:\n got %q\nwant %q", i+1, g, w)
+			}
+		}
 	}
-	// DD.MM.YYYY, not the stored YYYY-MM-DD.
-	if !strings.HasPrefix(lines[1], "19.07.2021,") {
-		t.Errorf("first data row = %q, want it to start with the DD.MM.YYYY date", lines[1])
+}
+
+// Older Monefy exports — and phones in most of Europe — write DD.MM.YYYY.
+func TestMonefyDMYProfileUsesDottedDates(t *testing.T) {
+	var buf bytes.Buffer
+	p, _ := Get("monefy-dmy")
+	if err := p.Write(&buf, sampleRows[:1]); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	lines := strings.Split(buf.String(), "\r\n")
+	if lines[1] != "19.07.2021,Cash,Food,-10,EUR,-10,EUR,lunch" {
+		t.Errorf("row = %q", lines[1])
+	}
+}
+
+func TestPlainDecimal(t *testing.T) {
+	for _, tc := range []struct {
+		minor    int64
+		currency string
+		want     string
+	}{
+		{-1000, "EUR", "-10"},
+		{-1050, "EUR", "-10.5"},
+		{-1055, "EUR", "-10.55"},
+		{-5, "EUR", "-0.05"},
+		{0, "EUR", "0"},
+		{-10524, "HUF", "-10524"},
+		{-1000, "HUF", "-1000"}, // a zero-decimal currency must keep its own zeros
+		{250000, "EUR", "2500"},
+	} {
+		if got := plainDecimal(tc.minor, tc.currency); got != tc.want {
+			t.Errorf("plainDecimal(%d, %s) = %q, want %q", tc.minor, tc.currency, got, tc.want)
+		}
 	}
 }
 
@@ -82,11 +160,22 @@ func TestMonefyProfileMatchesTheDocumentedFormat(t *testing.T) {
 // read back as the same transactions — otherwise "Monefy-compatible" is
 // aspirational rather than true.
 func TestMonefyProfileRoundTripsThroughTheImporter(t *testing.T) {
+	for _, id := range []string{"monefy", "monefy-dmy"} {
+		t.Run(id, func(t *testing.T) { roundTrip(t, id) })
+	}
+}
+
+func roundTrip(t *testing.T, id string) {
 	var buf bytes.Buffer
-	p, _ := Get("monefy")
-	if err := p.Write(&buf, sampleRows); err != nil {
+	p, _ := Get(id)
+	// Rows already in the order the profile writes them (by account, then
+	// date), so the comparison below can go index by index.
+	sorted := slices.Clone(sampleRows)
+	slices.SortStableFunc(sorted, func(a, b Row) int { return strings.Compare(a.AccountName, b.AccountName) })
+	if err := p.Write(&buf, sorted); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
+	sampleRows := sorted
 
 	res, err := importer.Parse(&buf)
 	if err != nil {

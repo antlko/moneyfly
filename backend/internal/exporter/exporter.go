@@ -24,6 +24,15 @@ type Row struct {
 	AmountMinor int64
 	Currency    string
 	Note        string
+	// Transfer marks a move between two of the user's own accounts. A
+	// transfer is neither spending nor income, so a profile whose consumers
+	// read the sign as one or the other (monefy) leaves it out.
+	Transfer bool
+	// ConvertedMinor is AmountMinor in ConvertedCurrency — the user's base
+	// currency, priced at the rate on OccurredOn. When no rate is known it is
+	// the original amount and currency, unconverted, rather than a guess.
+	ConvertedMinor    int64
+	ConvertedCurrency string
 }
 
 // Kind derives expense/income from the sign, the same rule the Monefy CSV

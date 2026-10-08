@@ -64,6 +64,21 @@ retention, long after every device has seen them.
 An edit that arrives after a delete, with a higher lamport, **resurrects the row**. This is correct:
 the edit genuinely happened later.
 
+**Server-written bulk deletes** — undoing a CSV import, or Settings → Data's erase
+(`internal/api/handlers_erase.go`) — are ordinary tombstones through `ApplyOps`, with two
+differences from a device's own delete, both deliberate:
+
+- **The body is empty (`{}`).** A device's delete keeps the row's body, natural key included, and
+  the importer and recurring worker both read a *deleted* natural key as "removed on purpose — do not
+  bring it back". That is right for one record deleted by hand and wrong here: the point of undoing
+  an import is usually to run it again, and with the keys kept every row would be skipped as already
+  imported. Dropping the body is what makes these deletes *forget*.
+- **The lamport is the account's high-water mark + 1**, not the row's own + 1 that the recurring
+  worker uses. The worker writes on someone's behalf and has to lose to them; an erase is the
+  person's own latest action, so it lands after every change the server has seen. A device that
+  still holds an offline edit at a higher clock will resurrect that one row when it reconnects —
+  the ordinary rule above — which is why the client pushes its outbox before asking.
+
 ## 3. Endpoints
 
 | Method | Path | Purpose |

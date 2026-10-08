@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight } from '@lucide/vue'
-import { computed } from 'vue'
+import { ArrowDown, ChartColumnBig, ChartPie, ChevronLeft, ChevronRight, X } from '@lucide/vue'
+import type { Component } from 'vue'
+import { computed, ref, useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
@@ -9,8 +10,10 @@ import { shortDate } from '@/lib/period'
 import type { PeriodKind } from '@/lib/period'
 import { useAccountsStore } from '@/stores/accounts'
 import { useDashboardStore } from '@/stores/dashboard'
+import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import type { Row } from '@/sync/types'
+import CategoryPie from './CategoryPie.vue'
 
 /**
  * The desktop analytics dashboard's content — everything except the sidebar,
@@ -25,7 +28,17 @@ import type { Row } from '@/sync/types'
 const dashboard = useDashboardStore()
 const accounts = useAccountsStore()
 const taxonomy = useTaxonomyStore()
+const settings = useSettingsStore()
 const router = useRouter()
+
+/** Pie or bars — a synced preference, like the phone's own donut/list toggle. */
+type ChartStyle = 'pie' | 'bars'
+const chartStyle = computed<ChartStyle>(() => settings.get(SETTING.desktopChart, 'pie'))
+const setChartStyle = (style: ChartStyle) => settings.set(SETTING.desktopChart, style)
+const CHART_STYLES: { style: ChartStyle; label: string; icon: Component }[] = [
+  { style: 'pie', label: 'Pie', icon: ChartPie },
+  { style: 'bars', label: 'Bars', icon: ChartColumnBig },
+]
 
 const PERIOD_KINDS: { kind: PeriodKind; label: string }[] = [
   { kind: 'month', label: 'Month' },
@@ -40,7 +53,70 @@ const PERIOD_KINDS: { kind: PeriodKind; label: string }[] = [
 // table of everything in "All time" would make the page itself the thing
 // that needs scrolling past.
 const RECENT_LIMIT = 50
-const recentRows = computed(() => [...dashboard.rows].reverse().slice(0, RECENT_LIMIT))
+
+/**
+ * The category picked in the chart, whose expenses the table then lists in
+ * full — the "where did it all go" question the chart raises and cannot answer.
+ * Kept across period changes, so paging through months follows one category.
+ */
+const selectedCategory = ref<string | null>(null)
+const recordsSection = useTemplateRef<HTMLElement>('records')
+
+type SortKey = 'date' | 'amount'
+const sortKey = ref<SortKey>('date')
+
+function selectCategory(id: string) {
+  if (selectedCategory.value === id) return clearCategory()
+  selectedCategory.value = id
+  // Largest first: the point of opening a category is usually its biggest items.
+  sortKey.value = 'amount'
+  recordsSection.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+
+function clearCategory() {
+  selectedCategory.value = null
+  sortKey.value = 'date'
+}
+
+const selectedTotal = computed(
+  () => dashboard.byCategory.find((c) => String(c.category.id) === selectedCategory.value) ?? null,
+)
+const selectedName = computed(
+  () => selectedTotal.value?.category.name ?? taxonomy.byId.get(selectedCategory.value ?? '')?.name ?? '',
+)
+
+/**
+ * A row's size for sorting, in the base currency so a forint and a euro record
+ * compare sensibly. An unconvertible row falls back to its own figure rather
+ * than vanishing from the list.
+ */
+const size = (row: Row) => Math.abs(dashboard.inBase(row) ?? Number(row.amountMinor ?? 0))
+
+const tableRows = computed(() => {
+  const rows = selectedCategory.value
+    ? dashboard.rows.filter(
+        (r) => r.kind === 'expense' && String(r.categoryId ?? '') === selectedCategory.value,
+      )
+    : [...dashboard.rows]
+  rows.sort((a, b) =>
+    sortKey.value === 'amount'
+      ? size(b) - size(a)
+      : String(b.occurredOn).localeCompare(String(a.occurredOn)),
+  )
+  // A category's list is shown whole; the unfiltered one is a glance, capped.
+  return selectedCategory.value ? rows : rows.slice(0, RECENT_LIMIT)
+})
+
+/** Largest and average for the selected category, in the base currency. */
+const selectedStats = computed(() => {
+  const t = selectedTotal.value
+  if (!t || t.count === 0) return null
+  const sizes = tableRows.value.map((r) => dashboard.inBase(r)).filter((m): m is number => m !== null)
+  return {
+    largest: sizes.length ? Math.max(...sizes.map(Math.abs)) : 0,
+    average: Math.round(Math.abs(t.totalMinor) / t.count),
+  }
+})
 
 const accountName = (id: unknown) => taxonomy.accounts.find((a) => a.id === id)?.name ?? ''
 
@@ -126,28 +202,63 @@ function openRecord(row: Row) {
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <!-- Category breakdown -->
       <section class="rounded-2xl bg-mf-surface p-5">
-        <h2 class="mb-4 font-medium">By category</h2>
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="font-medium">By category</h2>
+          <div class="flex gap-0.5 rounded-full bg-mf-bg p-0.5" role="group" aria-label="Chart style">
+            <button
+              v-for="opt in CHART_STYLES"
+              :key="opt.style"
+              type="button"
+              :aria-pressed="chartStyle === opt.style"
+              :title="opt.label"
+              class="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs"
+              :class="chartStyle === opt.style ? 'bg-mf-surface text-mf-ink shadow-sm' : 'text-mf-muted hover:text-mf-ink'"
+              @click="setChartStyle(opt.style)"
+            >
+              <component :is="opt.icon" :size="14" />
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
         <p v-if="dashboard.byCategory.length === 0" class="text-sm text-mf-muted">
           Nothing recorded for this period.
         </p>
-        <ul v-else class="space-y-3">
+        <CategoryPie
+          v-else-if="chartStyle === 'pie'"
+          :totals="dashboard.byCategory"
+          :expense-minor="dashboard.expenseMinor"
+          :currency="dashboard.baseCurrency"
+          :selected="selectedCategory"
+          @select="selectCategory"
+        />
+        <ul v-else class="space-y-1">
           <li v-for="c in dashboard.byCategory" :key="String(c.category.id)">
-            <div class="mb-1 flex items-center gap-2 text-sm">
-              <CategoryIcon :icon="c.category.icon" :color="c.category.color" :size="18" />
-              <span class="min-w-0 flex-1 truncate">{{ c.category.name }}</span>
-              <MoneyAmount :minor="Math.abs(c.totalMinor)" :currency="dashboard.baseCurrency" />
-            </div>
-            <div class="h-1.5 overflow-hidden rounded-full bg-mf-muted/20">
-              <div
-                class="h-full rounded-full"
-                :style="{
-                  width: `${Math.round(c.share * 100)}%`,
-                  backgroundColor: `var(--color-cat-${c.category.color ?? 'gray'})`,
-                }"
-              />
-            </div>
+            <button
+              type="button"
+              class="w-full rounded-lg px-2 py-1.5 text-left transition-colors"
+              :class="selectedCategory === String(c.category.id) ? 'bg-mf-green-soft/40' : 'hover:bg-mf-bg'"
+              @click="selectCategory(String(c.category.id))"
+            >
+              <div class="mb-1 flex items-center gap-2 text-sm">
+                <CategoryIcon :icon="c.category.icon" :color="c.category.color" :size="18" />
+                <span class="min-w-0 flex-1 truncate">{{ c.category.name }}</span>
+                <MoneyAmount :minor="Math.abs(c.totalMinor)" :currency="dashboard.baseCurrency" />
+              </div>
+              <div class="h-1.5 overflow-hidden rounded-full bg-mf-muted/20">
+                <div
+                  class="h-full rounded-full"
+                  :style="{
+                    width: `${Math.round(c.share * 100)}%`,
+                    backgroundColor: `var(--color-cat-${c.category.color ?? 'gray'})`,
+                  }"
+                />
+              </div>
+            </button>
           </li>
         </ul>
+        <p v-if="dashboard.byCategory.length" class="mt-3 text-xs text-mf-muted">
+          Click a category to list its expenses.
+        </p>
       </section>
 
       <!-- Accounts -->
@@ -171,26 +282,85 @@ function openRecord(row: Row) {
       </section>
     </div>
 
-    <!-- Recent transactions -->
-    <section class="rounded-2xl bg-mf-surface p-5">
-      <h2 class="mb-4 font-medium">
-        Recent records
-        <span class="text-sm font-normal text-mf-muted">({{ recentRows.length }})</span>
-      </h2>
-      <p v-if="recentRows.length === 0" class="text-sm text-mf-muted">Nothing recorded for this period.</p>
+    <!-- Records: recent ones, or every expense in the selected category -->
+    <section ref="records" class="scroll-mt-4 rounded-2xl bg-mf-surface p-5">
+      <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h2 v-if="!selectedCategory" class="font-medium">
+          Recent records
+          <span class="text-sm font-normal text-mf-muted">({{ tableRows.length }})</span>
+        </h2>
+        <template v-else>
+          <h2 class="flex items-center gap-2 font-medium">
+            <CategoryIcon
+              v-if="selectedTotal"
+              :icon="selectedTotal.category.icon"
+              :color="selectedTotal.category.color"
+              :size="20"
+            />
+            {{ selectedName }}
+            <span class="text-sm font-normal text-mf-muted">
+              {{ tableRows.length }} expense{{ tableRows.length === 1 ? '' : 's' }}
+            </span>
+          </h2>
+          <button
+            type="button"
+            class="flex items-center gap-1 rounded-full bg-mf-bg px-2.5 py-1 text-xs text-mf-muted hover:text-mf-ink"
+            @click="clearCategory"
+          >
+            <X :size="12" /> Show all records
+          </button>
+        </template>
+      </div>
+
+      <dl v-if="selectedTotal && selectedStats" class="mb-4 grid grid-cols-3 gap-3 text-sm">
+        <div class="rounded-xl bg-mf-bg px-3 py-2">
+          <dt class="text-xs text-mf-muted">Total · {{ Math.round(selectedTotal.share * 100) }}% of spending</dt>
+          <dd><MoneyAmount :minor="Math.abs(selectedTotal.totalMinor)" :currency="dashboard.baseCurrency" class="font-medium text-mf-red-text" /></dd>
+        </div>
+        <div class="rounded-xl bg-mf-bg px-3 py-2">
+          <dt class="text-xs text-mf-muted">Largest</dt>
+          <dd><MoneyAmount :minor="selectedStats.largest" :currency="dashboard.baseCurrency" class="font-medium" /></dd>
+        </div>
+        <div class="rounded-xl bg-mf-bg px-3 py-2">
+          <dt class="text-xs text-mf-muted">Average</dt>
+          <dd><MoneyAmount :minor="selectedStats.average" :currency="dashboard.baseCurrency" class="font-medium" /></dd>
+        </div>
+      </dl>
+
+      <p v-if="tableRows.length === 0" class="text-sm text-mf-muted">
+        {{ selectedCategory ? `No ${selectedName} expenses in this period.` : 'Nothing recorded for this period.' }}
+      </p>
       <table v-else class="w-full text-sm">
         <thead>
           <tr class="border-b border-mf-muted/20 text-left text-xs text-mf-muted">
-            <th class="pb-2 font-normal">Date</th>
+            <th class="pb-2 font-normal">
+              <button
+                type="button"
+                class="flex items-center gap-1 hover:text-mf-ink"
+                :class="sortKey === 'date' && 'text-mf-ink'"
+                @click="sortKey = 'date'"
+              >
+                Date <ArrowDown v-if="sortKey === 'date'" :size="12" />
+              </button>
+            </th>
             <th class="pb-2 font-normal">Category</th>
             <th class="pb-2 font-normal">Account</th>
             <th class="pb-2 font-normal">Note</th>
-            <th class="pb-2 text-right font-normal">Amount</th>
+            <th class="pb-2 font-normal">
+              <button
+                type="button"
+                class="ml-auto flex items-center gap-1 hover:text-mf-ink"
+                :class="sortKey === 'amount' && 'text-mf-ink'"
+                @click="sortKey = 'amount'"
+              >
+                <ArrowDown v-if="sortKey === 'amount'" :size="12" /> Amount
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="row in recentRows"
+            v-for="row in tableRows"
             :key="String(row.id)"
             class="cursor-pointer border-b border-mf-muted/10 last:border-0 hover:bg-mf-bg"
             @click="openRecord(row)"

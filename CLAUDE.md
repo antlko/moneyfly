@@ -302,6 +302,19 @@ running the dev servers.
   `{"error": …}` and would throw the count away. Re-running is always safe (natural-key dedup). The
   recurring worker uses the same helper defensively; `maxCatchUpPerTick` currently keeps it under the
   limit, and `TestCatchUpCapStaysUnderTheOpLimit` guards that relationship.
+- **A deleted natural key still blocks a re-import — unless the tombstone dropped it.** The importer
+  and recurring worker treat any txn that ever carried a natural key, live *or* deleted, as "already
+  there": deleting one record by hand is intent and must survive a re-import of an overlapping
+  export. Undo-import and Settings → Data's erase (`handlers_erase.go`) therefore write tombstones
+  with an empty `{}` body, which nulls the generated `natural_key` — that is the entire mechanism
+  that lets the same CSV be imported again. Keep the body on those tombstones and re-importing
+  silently skips every row as `alreadyImported`.
+- **The Monefy export profile is a byte-level contract, not a column list.** People feed it to
+  scripts written against Monefy's own file, so BOM, CRLF, date style, `-397.3` not `-397.30`,
+  account-then-date order and quoting-on-trailing-whitespace all matter, and `encoding/csv` gets the
+  last one wrong — hence the hand-written writer in `profile_monefy.go`.
+  `TestMonefyProfileWritesMonefysExactBytes` holds the exact expected bytes; if it fails, the export
+  changed under somebody's script. docs/MONEFY-PARITY.md §5 "The export" has every rule.
 - **Migrations**: add a new `backend/internal/db/migrations/NNNNN_name.sql` with `-- +goose Up`/`Down`;
   never edit an applied one. Dialect `sqlite3`. They are embedded and run inside `db.Open` on every
   start — there is no separate migrate command and the distroless image has no shell to run one.

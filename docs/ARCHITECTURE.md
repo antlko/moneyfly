@@ -367,6 +367,12 @@ Both switches read data from the stores the mobile screens already use — `dash
 `accounts.ts`, `taxonomy.ts` — never a separate desktop computation. A total that disagreed between
 the phone and the desktop dashboard would be far worse than the desktop one looking plain.
 
+The dashboard's "By category" card draws `dashboard.byCategory` as a pie (`CategoryPie.vue`) or as
+bars, chosen by the synced `view.desktopChart` setting. Clicking a category in either one turns the
+records table under it into that category's expenses for the period — all of them, largest first,
+with total, largest and average — instead of the 50 most recent records. The selection survives
+paging between periods, so one category can be followed month to month.
+
 **`#app` needs an explicit `height: 100vh` at this width, not `min-height`** — see the entry in
 CLAUDE.md's "Conventions that bite" before touching this rule; the short version is that a
 percentage `height` (`h-full`, which every reused mobile screen's root still has) does not resolve
@@ -386,6 +392,7 @@ against a `min-height`-only ancestor, only a definite one.
 | Anything about currency conversion | `internal/fx` and `web-ui/src/lib/fx.ts` — **both, with their mirrored test tables** |
 | An overlay's animation | the named transitions in `web-ui/src/assets/tailwind.css`, applied by wrapping the `v-if` at the call site |
 | A new export column shape | one `internal/exporter/profile_*.go` implementing `Profile`, self-registered in `init()` — `Get`/`IDs` resolve it by a string id, same shape as the FX provider chain |
+| Undoing an import, erasing data | `internal/api/handlers_erase.go` (server builds the tombstones) + `web-ui/src/components/monefy/DataSection.vue` (Settings → Data) — see [SYNC.md §2 "Deletes"](SYNC.md) before changing what a tombstone carries |
 | Monefy CSV parsing or category/account matching | `internal/importer` — pure and DB-agnostic, see its tests before `internal/api/handlers_import.go`'s |
 | A config field | `internal/config/config.go` (struct + `normalize` + `Validate`), `config.example.yaml`, [CONFIGURATION.md](CONFIGURATION.md) |
 
