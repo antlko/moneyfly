@@ -37,12 +37,13 @@ describe('monthTick', () => {
 
 describe('compactMoney', () => {
   it('shortens large figures', () => {
-    expect(compactMoney(1_240_000, 'EUR', 'en-GB')).toBe('€12.4K')
+    // The suffix's case is ICU's call (K on some CLDR versions, k on others) — compare case-blind.
+    expect(compactMoney(1_240_000, 'EUR', 'en-GB').toLowerCase()).toBe('€12.4k')
   })
   it('respects a currency with no minor unit', () => {
     // 16,724,698 HUF is stored as 16724698 minor units — exponent 0.
     // Intl separates the code with a no-break space; normalise it to compare.
-    expect(compactMoney(16_724_698, 'HUF', 'en-GB').replace(/\s/g, ' ')).toBe('HUF 16.7M')
+    expect(compactMoney(16_724_698, 'HUF', 'en-GB').replace(/\s/g, ' ').toLowerCase()).toBe('huf 16.7m')
   })
 })
 
