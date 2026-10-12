@@ -12,10 +12,16 @@
  *     refusing, and a quarter is already well past anything accidental.
  *
  * Anything less returns to where it started.
+ *
+ * A flick also has to have **gone somewhere** — `FLICK_MIN_PX`. A thumb tapping
+ * the pill moves a few pixels at speed as it lifts, and without a floor that
+ * jitter read as a flick: the sheet flipped instead of the records opening.
  */
 
 /** Release speed, in px per ms (≈ 350px/s), that counts as a flick. */
 export const FLICK_PX_PER_MS = 0.35
+/** Distance a flick must cover before its speed means anything. */
+export const FLICK_MIN_PX = 16
 /** Share of the travel a slow drag has to cover to change state. */
 export const COMMIT_SHARE = 0.25
 
@@ -23,11 +29,32 @@ export const COMMIT_SHARE = 0.25
  * @param from     the state the gesture started in
  * @param progress how far open the sheet is at release, 0–1
  * @param velocity px per ms at release, positive **upwards** (towards open)
+ * @param movedPx  how far the finger travelled, in px, either way
  */
-export function settleSheet(from: 0 | 1, progress: number, velocity: number): 0 | 1 {
-  if (Math.abs(velocity) >= FLICK_PX_PER_MS) return velocity > 0 ? 1 : 0
+export function settleSheet(
+  from: 0 | 1,
+  progress: number,
+  velocity: number,
+  movedPx: number,
+): 0 | 1 {
+  if (Math.abs(movedPx) >= FLICK_MIN_PX && Math.abs(velocity) >= FLICK_PX_PER_MS) {
+    return velocity > 0 ? 1 : 0
+  }
   if (Math.abs(progress - from) >= COMMIT_SHARE) return from === 1 ? 0 : 1
   return from
+}
+
+/**
+ * Movement that turns a press into a drag, by input.
+ *
+ * A mouse is precise, so a few pixels is intent. A thumb is not: it rolls as it
+ * lands and lifts, and at 6px a perfectly ordinary tap on `≡` or the pill was
+ * becoming a "drag" — whose click is then swallowed, so the tap did nothing and
+ * had to be repeated. 10px is about where browsers themselves stop calling a
+ * touch a tap, so the two judgements agree.
+ */
+export function dragSlop(pointerType: string): number {
+  return pointerType === 'mouse' ? 4 : 10
 }
 
 /** One pointer position, for measuring release speed. */

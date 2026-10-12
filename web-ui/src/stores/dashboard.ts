@@ -8,6 +8,7 @@ import {
   periodLabel,
   periodOfKind,
   shiftPeriod,
+  switchKind,
   type Period,
   type PeriodKind,
 } from '@/lib/period'
@@ -58,8 +59,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const setPeriod = (next: Period) => {
     period.value = next
   }
-  /** Switch the kind, keeping the day currently in view. */
-  const setPeriodKind = (kind: PeriodKind) => setPeriod(periodOfKind(kind, period.value.anchor))
+  /** Switch the kind — to today's week/day when today is in view (see `switchKind`). */
+  const setPeriodKind = (kind: PeriodKind) => setPeriod(switchKind(period.value, kind))
   const setInterval = (from: string, to: string) =>
     setPeriod({ kind: 'interval', anchor: from, until: to })
   /** Jump to the period containing a chosen day, keeping the kind. */

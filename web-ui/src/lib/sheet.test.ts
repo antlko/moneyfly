@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { releaseVelocity, settleSheet } from './sheet'
+import { dragSlop, releaseVelocity, settleSheet } from './sheet'
 
 describe('settleSheet', () => {
   it.each([
-    // [from, progress, velocity, expected]
+    // [from, progress, velocity, expected] — each with a real distance moved
     // A flick decides by direction, however little it travelled.
     [0, 0.05, 0.6, 1],
     [1, 0.95, -0.6, 0],
@@ -22,7 +22,20 @@ describe('settleSheet', () => {
     [0, 0, 0, 0],
     [1, 1, 0, 1],
   ] as const)('from %i at %d moving %d → %i', (from, progress, velocity, expected) => {
-    expect(settleSheet(from, progress, velocity)).toBe(expected)
+    expect(settleSheet(from, progress, velocity, 40)).toBe(expected)
+  })
+
+  it('does not treat a thumb’s jitter as a flick', () => {
+    // 8px at high speed: the finger rolling off a tap, not a swipe.
+    expect(settleSheet(0, 0.02, 0.9, 8)).toBe(0)
+    expect(settleSheet(1, 0.98, -0.9, -8)).toBe(1)
+  })
+})
+
+describe('dragSlop', () => {
+  it('asks more of a finger than of a mouse', () => {
+    expect(dragSlop('touch')).toBeGreaterThan(dragSlop('mouse'))
+    expect(dragSlop('pen')).toBe(dragSlop('touch'))
   })
 })
 

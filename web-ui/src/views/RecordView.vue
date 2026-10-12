@@ -121,11 +121,22 @@ onMounted(async () => {
  * when the remembered one has since been archived or deleted.
  */
 const accountId = ref<string | null>(null)
+
+/**
+ * What the picker offers: accounts open to spending, plus — when editing — the
+ * one the record already sits on, even if it has since been switched off, or
+ * opening an old record would silently move it to another account.
+ */
+const recordAccounts = computed(() => {
+  const kept = String(existing.value?.accountId ?? '')
+  return taxonomy.activeAccounts.filter(
+    (a) => String(a.id) === kept || taxonomy.spendingAccounts.includes(a),
+  )
+})
+
 const account = computed(() => {
   const chosen = accountId.value ?? settings.get<string>(SETTING.lastAccount, '')
-  return (
-    taxonomy.activeAccounts.find((a) => String(a.id) === chosen) ?? taxonomy.activeAccounts[0]
-  )
+  return recordAccounts.value.find((a) => String(a.id) === chosen) ?? recordAccounts.value[0]
 })
 
 const currency = computed(() => String(account.value?.currency ?? dashboard.baseCurrency))
@@ -418,7 +429,7 @@ function back() {
     <Transition name="mf-sheet">
       <AccountSheet
         v-if="showAccounts"
-        :options="taxonomy.activeAccounts"
+        :options="recordAccounts"
         :selected-id="String(account?.id ?? '')"
         @select="pickAccount"
         @close="showAccounts = false"

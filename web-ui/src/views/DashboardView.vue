@@ -207,7 +207,12 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
           {{ dashboard.unconvertedCount }} record(s) have no exchange rate yet and are not included
           in the total.
         </p>
-        <div class="min-h-0 flex-1 overflow-y-auto">
+        <!--
+          `overscroll-y-contain`: a scroll that reaches the end of the list
+          stops there instead of chaining on to a page that cannot scroll — a
+          pan with nothing under it, which costs the next tap (PullUpSheet).
+        -->
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
           <CategoryList
             :totals="dashboard.byCategory"
             :rows="dashboard.rows"
@@ -216,14 +221,16 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
           />
         </div>
       </SwipePager>
-    </PullUpSheet>
 
-    <RecordFabs
-      :burst="burst"
-      @expense="router.push('/new/expense')"
-      @income="router.push('/new/income')"
-      @burst-done="burst = null"
-    />
+      <template #footer>
+        <RecordFabs
+          :burst="burst"
+          @expense="router.push('/new/expense')"
+          @income="router.push('/new/income')"
+          @burst-done="burst = null"
+        />
+      </template>
+    </PullUpSheet>
 
     <Transition name="mf-sheet">
       <RecordsSheet

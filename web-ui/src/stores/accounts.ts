@@ -29,6 +29,14 @@ export interface AccountInput {
    * against are exactly that.
    */
   liquid?: boolean
+  /**
+   * Offered when recording an expense or income. Absent means yes. Off makes a
+   * "phantom" account: money that is counted in balances and capital but that
+   * spending is not tracked against — an investment account, or a USD stash
+   * that is kept and rarely touched. Independent of `liquid`: crypto can be
+   * ready to use and still not somewhere you log spending.
+   */
+  spendable?: boolean
 }
 
 /** The heading accounts without a group are listed under. */
@@ -36,6 +44,7 @@ export const UNGROUPED = 'Other'
 
 export const groupOf = (account: Row) => String(account.group ?? '').trim() || UNGROUPED
 export const isLiquid = (account: Row) => account.liquid !== false
+export const isSpendable = (account: Row) => account.spendable !== false
 
 /** The groups people reach for first — offered as suggestions, never imposed. */
 export const SUGGESTED_GROUPS = ['Cash', 'Banks', 'Savings', 'Deposits', 'Investments', 'Gold', 'Crypto']

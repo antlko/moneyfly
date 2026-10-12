@@ -259,3 +259,19 @@ export function periodLabel(period: Period, locale?: string): string {
 export function periodOfKind(kind: PeriodKind, anchor: DayKey = today()): Period {
   return kind === 'interval' ? { kind, anchor, until: anchor } : { kind, anchor }
 }
+
+/**
+ * The period of `kind` to show when switching to it from `from`.
+ *
+ * A month's anchor is its first day (that is what paging stores), so carrying
+ * the anchor over made "Week" open on 1–7 Oct and "Day" on 1 Oct whenever the
+ * month on screen was the current one. If the period being left contains today,
+ * the new one is the one around *today* — the week or day someone is living in.
+ * Looking at another month, the new period opens at that month's start, so
+ * Week/Day still land inside what was being looked at.
+ */
+export function switchKind(from: Period, kind: PeriodKind, now: Date = new Date()): Period {
+  const day = today(now)
+  const { from: first, to: last } = periodBounds(from)
+  return periodOfKind(kind, day >= first && day <= last ? day : from.anchor)
+}

@@ -11,6 +11,7 @@ import {
   periodBounds,
   periodLabel,
   shiftPeriod,
+  switchKind,
   today,
 } from './period'
 
@@ -172,5 +173,31 @@ describe('nextOccurrence', () => {
 
   it('clamps yearly off a leap day', () => {
     expect(nextOccurrence('2028-02-29', 'yearly')).toBe('2029-02-28')
+  })
+})
+
+describe('switchKind', () => {
+  const now = new Date(2026, 9, 12) // Monday 12 October 2026
+
+  it('opens the week and day around today when the current month is on screen', () => {
+    // A month pages as its first day — this used to open Week on 1–7 Oct.
+    const month = { kind: 'month' as const, anchor: '2026-10-01' }
+    expect(switchKind(month, 'week', now)).toEqual({ kind: 'week', anchor: '2026-10-12' })
+    expect(switchKind(month, 'day', now)).toEqual({ kind: 'day', anchor: '2026-10-12' })
+  })
+
+  it('opens at the start of another month, so Week and Day stay inside it', () => {
+    const month = { kind: 'month' as const, anchor: '2026-08-01' }
+    expect(switchKind(month, 'day', now)).toEqual({ kind: 'day', anchor: '2026-08-01' })
+  })
+
+  it('goes to today from a period that contains it, whatever its kind', () => {
+    expect(switchKind({ kind: 'all', anchor: '2026-01-01' }, 'month', now).anchor).toBe('2026-10-12')
+    expect(switchKind({ kind: 'year', anchor: '2026-01-01' }, 'week', now).anchor).toBe('2026-10-12')
+    expect(switchKind({ kind: 'week', anchor: '2026-10-14' }, 'day', now).anchor).toBe('2026-10-12')
+  })
+
+  it('keeps the anchor of a period that does not contain today', () => {
+    expect(switchKind({ kind: 'year', anchor: '2025-01-01' }, 'month', now).anchor).toBe('2025-01-01')
   })
 })

@@ -27,6 +27,17 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
   const activeAccounts = computed(() => accounts.value.filter((a) => !a.archived).sort(bySortOrder))
 
   /**
+   * The accounts the record screen offers: those not switched off for
+   * spending. Transfers, balances and the capital table still use every active
+   * account. Never empty while any account exists — switching them *all* off
+   * would otherwise leave nowhere to record anything.
+   */
+  const spendingAccounts = computed(() => {
+    const spendable = activeAccounts.value.filter((a) => a.spendable !== false)
+    return spendable.length > 0 ? spendable : activeAccounts.value
+  })
+
+  /**
    * Give a brand-new account its starting categories.
    *
    * Runs after the first sync, and only when the replica is genuinely empty. The
@@ -103,6 +114,7 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     expenseCategories,
     incomeCategories,
     activeAccounts,
+    spendingAccounts,
     byId,
     ensureSeeded,
     restoreDefaults,

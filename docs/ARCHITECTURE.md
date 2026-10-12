@@ -413,6 +413,13 @@ ones list under "Other") and `liquid` ("ready to use": absent means yes). The Ac
 by them, with a subtotal per group and two headline figures, net worth and ready to use, priced
 today in the base currency.
 
+A third field, `spendable` ("track spending": absent means yes), is independent of `liquid` — crypto
+can be ready to use and still not somewhere spending is logged, and a rarely used USD stash can be
+kept but left out. Off hides the account from the **record screen's** account picker only
+(`taxonomy.spendingAccounts`; an edited record keeps its own account selectable). Transfers,
+balances, net worth, capital and the dashboard's account filter still see it. If every account is
+switched off the picker falls back to all of them, so there is always somewhere to record.
+
 **"Set balance" moves the opening balance, never stores a balance.** `accounts.setBalance` writes
 `initialBalanceMinor + (target − derived)`, so the derived balance reads the target and every record
 stays as it was (docs/SYNC.md §2 still holds: there is no counter). It is the honest reading of "the

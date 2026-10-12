@@ -14,6 +14,7 @@ import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
 import {
   isLiquid,
+  isSpendable,
   SUGGESTED_GROUPS,
   UNGROUPED,
   useAccountsStore,
@@ -81,6 +82,7 @@ const form = ref({
   name: '',
   group: '',
   liquid: true,
+  spendable: true,
   currency: dashboard.baseCurrency,
   icon: 'Wallet',
   color: 'green' as CategoryColor,
@@ -108,6 +110,7 @@ function startCreate() {
     name: '',
     group: '',
     liquid: true,
+    spendable: true,
     currency: dashboard.baseCurrency,
     icon: 'Wallet',
     color: 'green',
@@ -122,6 +125,7 @@ function startEdit(account: Row) {
     name: String(account.name ?? ''),
     group: String(account.group ?? ''),
     liquid: isLiquid(account),
+    spendable: isSpendable(account),
     currency: String(account.currency ?? dashboard.baseCurrency),
     icon: String(account.icon ?? 'Wallet'),
     color: (account.color as CategoryColor) ?? 'green',
@@ -141,6 +145,7 @@ async function save() {
     color: form.value.color,
     group: form.value.group.trim(),
     liquid: form.value.liquid,
+    spendable: form.value.spendable,
   }
 
   const account = editing.value
@@ -280,7 +285,8 @@ const balanceDelta = computed(() => {
             <div class="min-w-0 flex-1">
               <p class="truncate">{{ account.name }}</p>
               <p class="truncate text-xs text-mf-muted">
-                {{ account.currency }}<template v-if="!isLiquid(account)"> · not ready to use</template>
+                {{ account.currency }}<template v-if="!isLiquid(account)"> · not ready to use</template
+                ><template v-if="!isSpendable(account)"> · no spending</template>
               </p>
             </div>
 
@@ -468,6 +474,35 @@ const balanceDelta = computed(() => {
                 <span class="block">Ready to use</span>
                 <span class="block text-xs text-mf-muted">
                   Off for money that is yours but not to hand — a term deposit, gold, investments.
+                </span>
+              </span>
+            </label>
+
+            <!--
+              Separate from "Ready to use": crypto can be to hand and still not
+              somewhere you log spending, and a USD stash can be kept and left
+              alone. Off hides the account from the record screen only —
+              transfers, balances and capital still count it.
+            -->
+            <label class="flex cursor-pointer items-start gap-3 text-sm sm:pt-6">
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="form.spendable"
+                class="relative mt-0.5 h-6 w-10 shrink-0 rounded-full transition-colors"
+                :class="form.spendable ? 'bg-mf-green' : 'bg-mf-muted'"
+                @click="form.spendable = !form.spendable"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 size-5 rounded-full bg-mf-surface shadow transition-transform"
+                  :class="form.spendable && 'translate-x-4'"
+                />
+              </button>
+              <span>
+                <span class="block">Track spending</span>
+                <span class="block text-xs text-mf-muted">
+                  Off for an account you only hold money in — investments, a rarely used USD stash.
+                  It stays in your balances and capital, and you can still transfer to and from it.
                 </span>
               </span>
             </label>
