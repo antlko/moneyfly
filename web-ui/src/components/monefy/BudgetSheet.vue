@@ -3,6 +3,7 @@ import { ref } from 'vue'
 
 import { useTaxonomyStore } from '@/stores/taxonomy'
 import CategoryIcon from './CategoryIcon.vue'
+import ModalSheet from './ModalSheet.vue'
 
 /**
  * A budget's currency is fixed to the base currency (not offered here) and it
@@ -11,7 +12,11 @@ import CategoryIcon from './CategoryIcon.vue'
  * schema-compatible with the less common cases arriving later: see
  * stores/budgets.ts.
  */
-defineProps<{ currency: string }>()
+const props = defineProps<{
+  currency: string
+  /** Present when editing an existing budget: its category and limit. */
+  initial?: { categoryId: string | null; amount: string }
+}>()
 const emit = defineEmits<{
   cancel: []
   create: [{ categoryId?: string; amount: string }]
@@ -19,8 +24,9 @@ const emit = defineEmits<{
 
 const taxonomy = useTaxonomyStore()
 /** null means the overall cap, across every category. */
-const categoryId = ref<string | null>(null)
-const amount = ref('')
+const categoryId = ref<string | null>(props.initial?.categoryId ?? null)
+const amount = ref(props.initial?.amount ?? '')
+const title = props.initial ? 'Edit budget' : 'New budget'
 
 function submit() {
   const value = Number(amount.value)
@@ -30,12 +36,9 @@ function submit() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end mf-scrim" @click.self="$emit('cancel')">
-    <form
-      class="max-h-[85%] w-full space-y-4 overflow-y-auto rounded-t-2xl bg-mf-bg p-4 pb-[calc(1rem+var(--spacing-safe-b))]"
-      @submit.prevent="submit"
-    >
-      <h2 class="text-lg font-medium">New budget</h2>
+  <ModalSheet size="lg" :label="title" @close="$emit('cancel')">
+    <form class="space-y-4 p-4 sm:p-6" @submit.prevent="submit">
+      <h2 class="text-lg font-medium">{{ title }}</h2>
 
       <div>
         <p class="mb-2 text-sm text-mf-muted">Category</p>
@@ -86,9 +89,9 @@ function submit() {
           Cancel
         </button>
         <button type="submit" class="flex-1 rounded-full bg-mf-green py-2.5 font-medium text-white">
-          Create
+          {{ initial ? 'Save' : 'Create' }}
         </button>
       </div>
     </form>
-  </div>
+  </ModalSheet>
 </template>

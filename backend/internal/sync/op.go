@@ -24,6 +24,7 @@ var Entities = []string{
 	"budget",
 	"recurring_rule",
 	"user_setting",
+	"account_snapshot",
 }
 
 // Limits on what a client may send. They bound abuse; they are not business
@@ -112,6 +113,8 @@ var specs = map[string]spec{
 	"budget":         {required: []string{"limitMinor", "currency"}, validate: validateBudget},
 	"recurring_rule": {required: []string{"kind", "freq", "nextOn", "amountMinor", "currency"}, validate: validateRecurring},
 	"user_setting":   {required: []string{"value"}},
+	// One account's value at the end of one month — see validateSnapshot.
+	"account_snapshot": {required: []string{"accountId", "month", "amountMinor", "currency"}, validate: validateSnapshot},
 }
 
 // Validate checks an op is structurally sound. A returned error is the text put
@@ -296,6 +299,24 @@ func validateRecurring(f fields) error {
 	}
 	if err := f.date("nextOn"); err != nil {
 		return err
+	}
+	if _, ok := f.integer("amountMinor"); !ok {
+		return fmt.Errorf("amountMinor must be a whole number of minor units")
+	}
+	return f.currency("currency")
+}
+
+// validateSnapshot checks a monthly capital check-in: which account, which
+// month, and how much — in minor units of the account's own currency, which is
+// carried on the row so a later change of the account's currency cannot
+// silently re-denominate a value typed in months ago. Negative is allowed: a
+// credit card or a loan is held at a negative value.
+func validateSnapshot(f fields) error {
+	if v, ok := f.str("accountId"); !ok || v == "" {
+		return fmt.Errorf("accountId must be a non-empty string")
+	}
+	if v, ok := f.str("month"); !ok || !periodPattern.MatchString(v) {
+		return fmt.Errorf("month must be YYYY-MM")
 	}
 	if _, ok := f.integer("amountMinor"); !ok {
 		return fmt.Errorf("amountMinor must be a whole number of minor units")

@@ -38,7 +38,7 @@ import (
 // list are preferences, not data, and the app cannot render without them.
 var eraseScopes = map[string][]string{
 	"records":    {"txn"},
-	"everything": {"txn", "recurring_rule", "budget", "account", "category"},
+	"everything": {"txn", "recurring_rule", "budget", "account_snapshot", "account", "category"},
 }
 
 type eraseRequest struct {

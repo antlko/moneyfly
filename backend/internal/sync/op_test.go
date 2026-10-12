@@ -68,6 +68,9 @@ func TestValidateAcceptsGoodOps(t *testing.T) {
 		op("budget", "b2", `{"limitMinor":50000,"currency":"EUR","period":"2026-08"}`),
 		op("recurring_rule", "r1", `{"kind":"expense","freq":"monthly","nextOn":"2026-09-01","amountMinor":-1200,"currency":"EUR"}`),
 		op("user_setting", "view.mode", `{"value":"donut"}`),
+		op("account_snapshot", "acc:cash:2026-08", `{"accountId":"acc:cash","month":"2026-08","amountMinor":120000,"currency":"EUR"}`),
+		// A loan or a credit card is held at a negative value.
+		op("account_snapshot", "acc:card:2026-08", `{"accountId":"acc:card","month":"2026-08","amountMinor":-5000,"currency":"EUR"}`),
 	}
 	for _, o := range good {
 		if err := o.Validate(); err != nil {
@@ -94,6 +97,10 @@ func TestValidateRejects(t *testing.T) {
 		{"lowercase currency", op("txn", "t", `{"kind":"expense","occurredOn":"2026-08-03","amountMinor":1,"currency":"eur"}`)},
 		{"income category kind on a category", op("category", "c", `{"name":"X","kind":"transfer"}`)},
 		{"bad budget period", op("budget", "b", `{"limitMinor":1,"currency":"EUR","period":"August"}`)},
+		{"snapshot without a month", op("account_snapshot", "s", `{"accountId":"a","amountMinor":1,"currency":"EUR"}`)},
+		{"snapshot with a day for a month", op("account_snapshot", "s", `{"accountId":"a","month":"2026-08-31","amountMinor":1,"currency":"EUR"}`)},
+		{"snapshot with a fractional amount", op("account_snapshot", "s", `{"accountId":"a","month":"2026-08","amountMinor":1.5,"currency":"EUR"}`)},
+		{"snapshot with an empty account", op("account_snapshot", "s", `{"accountId":"","month":"2026-08","amountMinor":1,"currency":"EUR"}`)},
 		{"bad recurrence", op("recurring_rule", "r", `{"kind":"expense","freq":"fortnightly","nextOn":"2026-09-01","amountMinor":-1200,"currency":"EUR"}`)},
 		{"recurring rule missing amount", op("recurring_rule", "r", `{"kind":"expense","freq":"monthly","nextOn":"2026-09-01","currency":"EUR"}`)},
 	}

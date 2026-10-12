@@ -76,6 +76,10 @@ running the dev servers.
   of its transactions. This is what lets sync get away with per-row last-write-wins instead of CRDT
   counters — concurrent edits conflict only when they touch the same row, and every aggregate is
   recomputed. Adding a stored running balance would silently break multi-device correctness.
+  "Set balance" therefore moves the **opening** balance (`accounts.setBalance`/`openingFor`), and a
+  monthly capital check-in (`account_snapshot`, one row per account per month, id
+  `<accountId>:<YYYY-MM>`) is a typed fact like the opening balance, not a total any record updates.
+  See docs/ARCHITECTURE.md §4f.
 - **Every sync operation is scoped by `user_id` taken from the session**, never from the request
   payload. An op naming a row that belongs to another user is rejected, not applied. Sync cursors are
   per `(user_id, device_id)` — never global.
@@ -211,7 +215,7 @@ running the dev servers.
 - **A pointer gesture must track which pointer is down and check that a button is held.** A mouse
   emits `pointermove` while merely hovering, so a handler that looks at coordinates alone treats
   crossing the window as a drag — and if it then takes `setPointerCapture`, it steals every click
-  from its children. `SwipePager` and `BalancePill` show the shape: record `pointerdown`'s
+  from its children. `SwipePager` and `PullUpSheet` show the shape: record `pointerdown`'s
   `pointerId`, ignore events without it, and bail when a mouse comes back with `buttons === 0`.
 - **The mobile shell is `position: fixed; inset: 0`, not `height: 100%`.** On iOS `100%` resolves
   against the *large* viewport, so the document is taller than the screen and the whole app scrolls —
@@ -227,6 +231,14 @@ running the dev servers.
   document can still grow past one screen for the dashboard's own longer content; only `#app` needs
   the fixed number, and its `overflow` is left alone so taller content is not clipped, just pushes
   the document taller.
+- **A screen with the app's own keypad must step aside for the OS keyboard — `useSystemKeyboard`
+  (`lib/keyboard.ts`).** Android shrinks the viewport for the keyboard, and a keypad pinned to the
+  bottom of a `flex-1` column then overflows *upwards* over the amount and the field being typed in
+  (`RecordView`, `TransferView`). Hide on focus (before the resize), show again only once the viewport
+  has grown back (not on `blur` — the keyboard is still leaving), and blur the field yourself when the
+  viewport grows back without one, because Android's back gesture closes the keyboard and leaves focus
+  where it was. The keypad's `<Transition>` needs `@leave="leaveAtOnce"`: with no leave CSS Vue still
+  waits two frames before `display: none`, and the hook's **two parameters** are what hand it `done`.
 - **`showPicker()` on a hidden `<input type="date">` must be called from a click on that same input,
   not from a wrapping `<button>` around it.** A real iPhone enforces same-element activation for this
   and refuses it otherwise — no error, nothing opens, indistinguishable from the control being dead.
@@ -256,6 +268,12 @@ running the dev servers.
   viewport instead (`maximum-scale=1, user-scalable=no` in index.html), which never touches touch
   gesture recognition. `touch-action` stays fine on individual elements that actually drag
   (`SwipePager`, sheet handles) — the trap is specifically the document root.
+- **A drag handle that holds buttons follows the gesture on `window`, not with pointer capture.**
+  `PullUpSheet` (the dashboard's donut ↔ list sheet, dragged by the balance row) needs mouse moves
+  after the cursor has left a 56px strip, and capture would get them — but while an element holds
+  capture, the click that ends a *tap* is retargeted to it instead of the `≡` or pill pressed. So
+  `pointerdown` on the handle adds `window` listeners until release, and a capture-phase click handler
+  swallows only the click a real drag ends with, reset on every press.
 - **…and it must not believe every `lostpointercapture` it sees.** A *touch* pointer is implicitly
   captured by whatever element it lands on, so calling `setPointerCapture` on an ancestor revokes
   that — and the descendant's `lostpointercapture` **bubbles** straight into the ancestor's own
@@ -284,6 +302,15 @@ running the dev servers.
   inside the component: a `v-if` alone cannot animate a departure, and the departure is the half
   people notice. The named transitions (`mf-fade`, `mf-sheet`, `mf-drawer-l/r`, `mf-page`) live in
   `src/assets/tailwind.css` with `--mf-ease` / `--mf-duration`.
+- **A new sheet goes inside `ModalSheet.vue`**, not its own `fixed inset-0` scrim. It is what turns
+  a phone's bottom sheet into a centred dialog at the desktop breakpoint; a sheet that draws its own
+  overlay comes out as a full-width strip along the bottom of a monitor, which is exactly what every
+  sheet looked like before it existed.
+- **Charts: one value axis, colours only from `--color-chart-*`, assigned by meaning.** Two measures
+  of different scale are two charts, never a second y-axis. The chart tokens are the dataviz skill's
+  documented slots, validated pairwise against the white card; the `cat-*` category palette is not
+  colour-blind-safe and must not be reused for series. Text never takes a series colour — the key
+  beside it carries identity. `components/charts/TimeChart.vue` already follows the mark rules.
 - **A template handler must be one expression.** `@click="a(); b()"` across two statements — or one
   statement carrying a TypeScript cast — does not compile, and **`vue-tsc` does not catch it**: only
   the dev server does, at request time, and the page renders blank. Put it in a named function.

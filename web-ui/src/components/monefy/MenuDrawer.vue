@@ -2,6 +2,7 @@
 import {
   Banknote,
   BookOpen,
+  ChartLine,
   CircleDollarSign,
   FileUp,
   NotebookTabs,
@@ -26,6 +27,7 @@ const auth = useAuthStore()
 const BASE_ITEMS: { to: string; label: string; icon: Component; ready: boolean }[] = [
   { to: '/categories', label: 'Categories', icon: NotebookTabs, ready: false },
   { to: '/accounts', label: 'Accounts', icon: Banknote, ready: true },
+  { to: '/capital', label: 'Capital', icon: ChartLine, ready: true },
   { to: '/budgets', label: 'Budgets', icon: PiggyBank, ready: true },
   { to: '/recurring', label: 'Recurring', icon: Repeat, ready: true },
   { to: '/currencies', label: 'Currencies', icon: CircleDollarSign, ready: true },

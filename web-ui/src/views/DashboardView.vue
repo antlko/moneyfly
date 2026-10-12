@@ -8,6 +8,7 @@ import CategoryDonut from '@/components/monefy/CategoryDonut.vue'
 import CategoryList from '@/components/monefy/CategoryList.vue'
 import MonefyHeader from '@/components/monefy/MonefyHeader.vue'
 import MonthCarousel from '@/components/monefy/MonthCarousel.vue'
+import PullUpSheet from '@/components/monefy/PullUpSheet.vue'
 import RecordFabs from '@/components/monefy/RecordFabs.vue'
 import SwipePager from '@/components/monefy/SwipePager.vue'
 
@@ -34,6 +35,7 @@ const DesktopDashboardContent = defineAsyncComponent(
 import { useIsDesktop } from '@/lib/breakpoint'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'
+import { useRecordBurstStore } from '@/stores/recordBurst'
 import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useSyncStore } from '@/stores/sync'
 import { useTaxonomyStore } from '@/stores/taxonomy'
@@ -54,6 +56,13 @@ const router = useRouter()
  * either way; this only decides which template renders them.
  */
 const isDesktop = useIsDesktop()
+
+/**
+ * A record saved a moment ago, rising out of the button that started it. Taken
+ * on mount whatever the form factor, so a burst the desktop layout has nowhere
+ * to play is dropped rather than kept for a later visit.
+ */
+const burst = ref(useRecordBurstStore().take())
 
 const showRecords = ref(false)
 const showFilter = ref(false)
@@ -99,6 +108,9 @@ useEventListener(window, 'pageshow', () => dashboard.goToNow())
 const recordIn = (category: Row) =>
   router.push({ path: '/new/expense', query: { category: String(category.id) } })
 
+/** The sheet open is list mode; docked is the donut. */
+const setListOpen = (open: boolean) => dashboard.setView(open ? 'list' : 'donut')
+
 /** Tapping a record opens it for editing — the row itself is the control. */
 const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
 </script>
@@ -118,71 +130,84 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
     <MonthCarousel :period="dashboard.period" @select="dashboard.setPeriod" />
 
     <!--
-      The balance pill moves. In list mode it sits above the rows, as a header
-      for them; in donut mode the reference puts it at the bottom, just over the
-      record buttons, so the chart owns the middle of the screen. Two positions
-      for one component rather than two components.
-    -->
-    <BalancePill
-      v-if="dashboard.view === 'list'"
-      :balance-minor="dashboard.balanceMinor"
-      :currency="dashboard.baseCurrency"
-      @toggle-view="dashboard.toggleView"
-      @toggle-sort="dashboard.toggleSort"
-      @open="showRecords = true"
-    />
+      Donut and list are one screen with a sheet over it, not two layouts.
 
-    <!--
-      One pager, kept mounted across a view change.
+      The balance row is the sheet's handle. Docked, it sits over the record
+      buttons with the donut above it; pulled up — by a drag that follows the
+      finger, or by `≡`, which animates the same travel — it sits under the
+      carousel with the category list below it. Those are exactly the two
+      layouts the reference has, so at rest nothing differs from them; only the
+      motion between them is new. See PullUpSheet.
 
-      It used to carry `:key="dashboard.view"`, which threw the whole thing away
-      and built a new one every time the `≡` was pressed — so switching between
-      the donut and the list read as *navigating somewhere*, when it is the same
-      screen drawn a second way. The two bodies cross-fade inside it instead.
+      Each layer keeps its own pager, so a horizontal swipe changes the period
+      over whichever one is showing.
     -->
-    <SwipePager
-      :disabled="!dashboard.pageable"
-      :vertical-scroll="dashboard.view === 'list'"
-      @prev="dashboard.step(-1)"
-      @next="dashboard.step(1)"
+    <PullUpSheet
+      :open="dashboard.view === 'list'"
+      @update:open="setListOpen"
     >
-      <!--
-        Foreign-currency rows are converted now, so this warns about the case
-        that is left: no rate known for that pair on that day. Those rows are
-        out of the totals, and saying so is the difference between a visible gap
-        and a month that quietly looks cheaper than it was.
-      -->
-      <p
-        v-if="dashboard.unconvertedCount"
-        class="mx-4 mt-2 shrink-0 rounded-lg bg-mf-green-soft/30 p-2 text-xs"
-      >
-        {{ dashboard.unconvertedCount }} record(s) have no exchange rate yet and are not included in
-        the total.
-      </p>
+      <template #behind>
+        <SwipePager
+          :disabled="!dashboard.pageable"
+          @prev="dashboard.step(-1)"
+          @next="dashboard.step(1)"
+        >
+          <!--
+            Foreign-currency rows are converted now, so this warns about the case
+            that is left: no rate known for that pair on that day. Those rows are
+            out of the totals, and saying so is the difference between a visible
+            gap and a month that quietly looks cheaper than it was.
+          -->
+          <p
+            v-if="dashboard.unconvertedCount"
+            class="mx-4 mt-2 shrink-0 rounded-lg bg-mf-green-soft/30 p-2 text-xs"
+          >
+            {{ dashboard.unconvertedCount }} record(s) have no exchange rate yet and are not
+            included in the total.
+          </p>
+          <!--
+            No horizontal padding: the icon ring is measured from this box, so
+            every point of padding here pushes the categories in from the edges
+            and takes the same off the chart's diameter twice over.
+          -->
+          <div class="min-h-0 flex-1 py-1">
+            <CategoryDonut
+              :totals="dashboard.byCategory"
+              :all-categories="taxonomy.expenseCategories"
+              :income-minor="dashboard.incomeMinor"
+              :expense-minor="dashboard.expenseMinor"
+              :currency="dashboard.baseCurrency"
+              @select="recordIn"
+            />
+          </div>
+        </SwipePager>
+      </template>
 
-      <!--
-        Donut and list are two drawings of one thing, so they trade places
-        rather than arriving from somewhere: a short cross-fade, in position,
-        with the carousel and the pill sitting still around them.
-      -->
-      <Transition name="mf-swap" mode="out-in">
-        <!-- The donut block takes the whole body: its icon frame is sized to fill it. -->
-        <!--
-          No horizontal padding: the icon ring is measured from this box, so
-          every point of padding here pushes the categories in from the edges
-          and takes the same off the chart's diameter twice over.
-        -->
-        <div v-if="dashboard.view === 'donut'" key="donut" class="min-h-0 flex-1 py-1">
-          <CategoryDonut
-            :totals="dashboard.byCategory"
-            :all-categories="taxonomy.expenseCategories"
-            :income-minor="dashboard.incomeMinor"
-            :expense-minor="dashboard.expenseMinor"
-            :currency="dashboard.baseCurrency"
-            @select="recordIn"
-          />
-        </div>
-        <div v-else key="list" class="min-h-0 flex-1 overflow-y-auto">
+      <template #handle>
+        <BalancePill
+          :balance-minor="dashboard.balanceMinor"
+          :currency="dashboard.baseCurrency"
+          :show-trailing-toggle="dashboard.view === 'donut'"
+          @toggle-view="dashboard.toggleView"
+          @toggle-sort="dashboard.toggleSort"
+          @open="showRecords = true"
+        />
+      </template>
+
+      <SwipePager
+        :disabled="!dashboard.pageable"
+        vertical-scroll
+        @prev="dashboard.step(-1)"
+        @next="dashboard.step(1)"
+      >
+        <p
+          v-if="dashboard.unconvertedCount"
+          class="mx-4 mt-2 shrink-0 rounded-lg bg-mf-green-soft/30 p-2 text-xs"
+        >
+          {{ dashboard.unconvertedCount }} record(s) have no exchange rate yet and are not included
+          in the total.
+        </p>
+        <div class="min-h-0 flex-1 overflow-y-auto">
           <CategoryList
             :totals="dashboard.byCategory"
             :rows="dashboard.rows"
@@ -190,20 +215,15 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
             @open="openRecord"
           />
         </div>
-      </Transition>
-    </SwipePager>
+      </SwipePager>
+    </PullUpSheet>
 
-    <BalancePill
-      v-if="dashboard.view === 'donut'"
-      :balance-minor="dashboard.balanceMinor"
-      :currency="dashboard.baseCurrency"
-      show-trailing-toggle
-      @toggle-view="dashboard.toggleView"
-      @toggle-sort="dashboard.toggleSort"
-      @open="showRecords = true"
+    <RecordFabs
+      :burst="burst"
+      @expense="router.push('/new/expense')"
+      @income="router.push('/new/income')"
+      @burst-done="burst = null"
     />
-
-    <RecordFabs @expense="router.push('/new/expense')" @income="router.push('/new/income')" />
 
     <Transition name="mf-sheet">
       <RecordsSheet

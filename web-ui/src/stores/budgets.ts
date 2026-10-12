@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
-import { currentMonth, monthBounds } from '@/lib/period'
+import { addMonths, currentMonth, monthBounds, type MonthKey } from '@/lib/period'
 import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
 import { useDashboardStore } from './dashboard'
@@ -23,6 +23,8 @@ export interface BudgetProgress {
   share: number
   /** Expenses this month that could not be priced into the budget's currency. */
   unconverted: number
+  /** The same budget's spending last calendar month, for "are we doing better". */
+  lastMonthMinor: number
 }
 
 /**
@@ -49,16 +51,20 @@ export const useBudgetsStore = defineStore('budgets', () => {
     [],
   )
 
-  /** This calendar month's expenses — a budget tracks the real month, not
-   * whichever period the dashboard happens to be showing. */
-  const monthExpenses = computed(() => {
-    const { from, to } = monthBounds(currentMonth())
+  /**
+   * One calendar month's expenses — a budget tracks the real month, not
+   * whichever period the dashboard happens to be showing.
+   */
+  const expensesIn = (month: MonthKey) => {
+    const { from, to } = monthBounds(month)
     return allTxns.value.filter((r) => {
       if (r.kind !== 'expense') return false
       const day = String(r.occurredOn ?? '')
       return day >= from && day <= to
     })
-  })
+  }
+  const monthExpenses = computed(() => expensesIn(currentMonth()))
+  const lastMonthExpenses = computed(() => expensesIn(addMonths(currentMonth(), -1)))
 
   /**
    * A row priced into a budget's own currency, on the day it happened — the
@@ -75,13 +81,13 @@ export const useBudgetsStore = defineStore('budgets', () => {
     return fx.convert(Number(row.amountMinor ?? 0), rowCurrency, currency, String(row.occurredOn ?? ''))
   }
 
-  function spentOn(budget: Row): { spentMinor: number; unconverted: number } {
+  function spentOn(budget: Row, expenses: Row[]): { spentMinor: number; unconverted: number } {
     const currency = String(budget.currency)
     const categoryId = budget.categoryId ? String(budget.categoryId) : null
 
     let spentMinor = 0
     let unconverted = 0
-    for (const row of monthExpenses.value) {
+    for (const row of expenses) {
       if (categoryId && String(row.categoryId ?? '') !== categoryId) continue
       const priced = inCurrency(row, currency)
       if (priced === null) unconverted++
@@ -92,13 +98,26 @@ export const useBudgetsStore = defineStore('budgets', () => {
 
   const progress = computed<BudgetProgress[]>(() =>
     budgets.value.map((budget) => {
-      const { spentMinor, unconverted } = spentOn(budget)
+      const { spentMinor, unconverted } = spentOn(budget, monthExpenses.value)
+      const lastMonthMinor = spentOn(budget, lastMonthExpenses.value).spentMinor
       const limitMinor = Number(budget.limitMinor ?? 0)
-      return { budget, spentMinor, unconverted, share: limitMinor > 0 ? spentMinor / limitMinor : 0 }
+      return {
+        budget,
+        spentMinor,
+        unconverted,
+        lastMonthMinor,
+        share: limitMinor > 0 ? spentMinor / limitMinor : 0,
+      }
     }),
   )
 
   const create = (input: BudgetInput) => sync.write('budget', { ...input })
 
-  return { budgets, progress, create }
+  /** Change a budget's limit or category, keeping everything else on the row. */
+  const update = (budget: Row, input: Partial<BudgetInput>) => {
+    const { id, lamport: _l, deviceId: _d, updatedAt: _u, deleted: _del, ...body } = budget
+    return sync.write('budget', { ...body, ...input }, String(id))
+  }
+
+  return { budgets, progress, create, update }
 })

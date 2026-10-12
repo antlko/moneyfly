@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { currencyName } from '@/lib/currencies'
 import { STORAGE_BASE } from '@/lib/fx'
 import { today } from '@/lib/period'
+import ModalSheet from './ModalSheet.vue'
 
 /**
  * Type a rate in by hand.
@@ -46,12 +47,9 @@ function submit() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex flex-col justify-end mf-scrim" @click.self="emit('close')">
-    <form
-      class="space-y-4 rounded-t-2xl bg-mf-bg p-4 pb-[calc(1rem+var(--spacing-safe-b))]"
-      @submit.prevent="submit"
-    >
-      <div class="mx-auto h-1 w-10 rounded-full bg-mf-muted" />
+  <ModalSheet :label="`Set the ${code} rate`" @close="emit('close')">
+    <form class="space-y-4 p-4 sm:p-6" @submit.prevent="submit">
+      <div class="mx-auto h-1 w-10 rounded-full bg-mf-muted sm:hidden" />
 
       <div>
         <h2 class="text-lg font-medium">Set the {{ code }} rate</h2>
@@ -103,5 +101,5 @@ function submit() {
         </button>
       </div>
     </form>
-  </div>
+  </ModalSheet>
 </template>

@@ -3,8 +3,10 @@ import { computed } from 'vue'
 
 import { db } from '@/db'
 import { useLiveQuery } from '@/db/live'
+import { today, type DayKey } from '@/lib/period'
 import { sync } from '@/sync/engine'
 import type { Row } from '@/sync/types'
+import { useAuthStore } from './auth'
 import { useFxStore } from './fx'
 import { useTaxonomyStore } from './taxonomy'
 
@@ -14,6 +16,43 @@ export interface AccountInput {
   icon: string
   color: string
   initialBalanceMinor: number
+  /**
+   * Where the money sits, as the person groups it: "Cash", "Banks", "Gold",
+   * "Deposits"… Free text, because nobody's list is the same, and the groups
+   * are simply the distinct values. Absent means ungrouped.
+   */
+  group?: string
+  /**
+   * Ready to use: money that can be spent this week (cash, a current account),
+   * as opposed to money that exists but is not to hand (a term deposit, gold,
+   * investments). Absent means yes — most accounts people record spending
+   * against are exactly that.
+   */
+  liquid?: boolean
+}
+
+/** The heading accounts without a group are listed under. */
+export const UNGROUPED = 'Other'
+
+export const groupOf = (account: Row) => String(account.group ?? '').trim() || UNGROUPED
+export const isLiquid = (account: Row) => account.liquid !== false
+
+/** The groups people reach for first — offered as suggestions, never imposed. */
+export const SUGGESTED_GROUPS = ['Cash', 'Banks', 'Savings', 'Deposits', 'Investments', 'Gold', 'Crypto']
+
+/** Accounts under one heading, in the order they are listed. */
+export interface AccountGroup {
+  name: string
+  accounts: Row[]
+}
+
+/** Every live balance in the base currency, added up the way the capital table adds a month. */
+export interface LiveTotals {
+  totalMinor: number
+  readyMinor: number
+  byGroup: Map<string, number>
+  /** Accounts left out because their currency has no rate yet. */
+  unconverted: number
 }
 
 /**
@@ -26,12 +65,19 @@ export interface AccountInput {
 export const useAccountsStore = defineStore('accounts', () => {
   const taxonomy = useTaxonomyStore()
   const fx = useFxStore()
+  const auth = useAuthStore()
 
   // Every transaction, not just the visible period: a balance is the whole
   // history by definition.
   const all = useLiveQuery<Row[]>(() => db.txn.where('deleted').equals(0).toArray(), [])
 
-  const balances = computed(() => {
+  /**
+   * Every account's balance — at the end of `until` if given, otherwise now.
+   *
+   * The dated form is for the capital check-in, which offers what the ledger
+   * says an account held at the end of a past month as the figure to confirm.
+   */
+  function computeBalances(until?: DayKey): Map<string, number> {
     const totals = new Map<string, number>()
     const currencies = new Map<string, string>()
     for (const account of taxonomy.accounts) {
@@ -55,6 +101,7 @@ export const useAccountsStore = defineStore('accounts', () => {
 
     for (const row of all.value) {
       const day = String(row.occurredOn ?? '')
+      if (until && day > until) continue
       const currency = String(row.currency ?? '')
 
       const from = String(row.accountId ?? '')
@@ -81,9 +128,77 @@ export const useAccountsStore = defineStore('accounts', () => {
       if (credited !== null) totals.set(to, totals.get(to)! + credited)
     }
     return totals
-  })
+  }
+
+  const balances = computed(() => computeBalances())
+  const balancesAt = (day: DayKey) => computeBalances(day)
 
   const balanceOf = (id: unknown) => balances.value.get(String(id)) ?? 0
+
+  /** Whether any record touches an account — i.e. whether its ledger balance means anything. */
+  const hasRecords = computed(() => {
+    const ids = new Set<string>()
+    for (const row of all.value) {
+      ids.add(String(row.accountId ?? ''))
+      if (row.toAccountId) ids.add(String(row.toAccountId))
+    }
+    return ids
+  })
+
+  /**
+   * Accounts under their group headings.
+   *
+   * Groups come in the order of their first account, so dragging accounts into
+   * order (sortOrder) is also how the groups are ordered — one ordering to
+   * manage, not two. Ungrouped ones go last.
+   */
+  const groups = computed<AccountGroup[]>(() => {
+    const out = new Map<string, Row[]>()
+    for (const account of taxonomy.activeAccounts) {
+      const name = groupOf(account)
+      const list = out.get(name)
+      if (list) list.push(account)
+      else out.set(name, [account])
+    }
+    return [...out.entries()]
+      .map(([name, accounts]) => ({ name, accounts }))
+      .sort((a, b) => Number(a.name === UNGROUPED) - Number(b.name === UNGROUPED))
+  })
+
+  /** Every group name in use, for the group field's suggestions. */
+  const groupNames = computed(() => {
+    const names = new Set<string>()
+    for (const a of taxonomy.accounts) {
+      const g = String(a.group ?? '').trim()
+      if (g) names.add(g)
+    }
+    return [...names].sort()
+  })
+
+  /**
+   * Live balances in the base currency, priced today: net worth as the ledger
+   * sees it right now. The capital table shows the checked-in history; this is
+   * the "now" that sits beside it on the dashboard and the accounts screen.
+   */
+  const liveTotals = computed<LiveTotals>(() => {
+    const base = auth.user?.baseCurrency ?? 'EUR'
+    const day = today()
+    const out: LiveTotals = { totalMinor: 0, readyMinor: 0, byGroup: new Map(), unconverted: 0 }
+    for (const account of taxonomy.activeAccounts) {
+      const own = balanceOf(account.id)
+      const currency = String(account.currency ?? base)
+      const minor = currency === base ? own : fx.convert(own, currency, base, day)
+      if (minor === null) {
+        out.unconverted++
+        continue
+      }
+      out.totalMinor += minor
+      if (isLiquid(account)) out.readyMinor += minor
+      const group = groupOf(account)
+      out.byGroup.set(group, (out.byGroup.get(group) ?? 0) + minor)
+    }
+    return out
+  })
 
   const create = (input: AccountInput) =>
     sync.write('account', { ...input, sortOrder: taxonomy.accounts.length, archived: 0 })
@@ -105,5 +220,46 @@ export const useAccountsStore = defineStore('accounts', () => {
   const archive = (id: string) => update(id, { archived: 1 })
   const restore = (id: string) => update(id, { archived: 0 })
 
-  return { balances, balanceOf, create, update, archive, restore }
+  /**
+   * Make an account's balance read `targetMinor` now.
+   *
+   * By moving its **opening** balance by the difference — never by storing a
+   * balance, which would be a counter two devices could not merge (docs/SYNC.md
+   * §2). Every record stays exactly as it was; the account simply started from
+   * a different place. That is the honest reading of "the app says −35,000 but
+   * I have 9,944 in cash": the records are fine, the starting point was never
+   * entered.
+   */
+  function setBalance(id: string, targetMinor: number) {
+    if (targetMinor === balanceOf(id)) return Promise.resolve(id)
+    return update(id, { initialBalanceMinor: openingFor(id, targetMinor) })
+  }
+
+  /**
+   * The opening balance that makes an account's balance read `targetMinor`.
+   *
+   * Exposed so a form saving other fields at the same time can write it **in
+   * the same `update`**. Two updates in a row would race: the second spreads
+   * the row as the live query last saw it, which may not include the first yet.
+   */
+  function openingFor(id: string, targetMinor: number): number {
+    const account = taxonomy.accounts.find((a) => a.id === id)
+    return Number(account?.initialBalanceMinor ?? 0) + (targetMinor - balanceOf(id))
+  }
+
+  return {
+    balances,
+    balanceOf,
+    balancesAt,
+    hasRecords,
+    groups,
+    groupNames,
+    liveTotals,
+    create,
+    update,
+    archive,
+    restore,
+    setBalance,
+    openingFor,
+  }
 })

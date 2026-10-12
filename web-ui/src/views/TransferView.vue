@@ -10,6 +10,7 @@ import DateRow from '@/components/monefy/DateRow.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { display, initialState, press, total, type Key } from '@/lib/calculator'
 import { clampAmountString, useClampOnCurrencyChange } from '@/lib/currencyClamp'
+import { dismissKeyboard, leaveAtOnce, useSystemKeyboard } from '@/lib/keyboard'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { today } from '@/lib/period'
 import { useDashboardStore } from '@/stores/dashboard'
@@ -32,6 +33,8 @@ const to = computed(() => accounts.value.find((a) => String(a.id) === toId.value
 const calc = ref(initialState())
 const day = ref(today())
 const note = ref('')
+/** The keypad makes way for the phone's keyboard — the note and "Received" both raise it. */
+const keyboardUp = useSystemKeyboard()
 
 const currency = computed(() => String(from.value?.currency ?? dashboard.baseCurrency))
 const toCurrency = computed(() => String(to.value?.currency ?? currency.value))
@@ -202,8 +205,10 @@ function swap() {
           v-model="received"
           type="number"
           :step="exponent(toCurrency) === 0 ? '1' : '0.01'"
+          enterkeyhint="done"
           class="w-full rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 outline-none focus:border-mf-green"
           @input="touched = true"
+          @keydown.enter="dismissKeyboard"
         />
       </label>
 
@@ -214,14 +219,18 @@ function swap() {
           type="text"
           placeholder="Add note"
           maxlength="140"
+          enterkeyhint="done"
           class="w-full bg-transparent outline-none placeholder:text-mf-muted"
+          @keydown.enter="dismissKeyboard"
         />
       </label>
 
       <div
         class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]"
       >
-        <AmountKeypad @press="key" />
+        <Transition name="mf-reveal" @leave="leaveAtOnce">
+          <AmountKeypad v-show="!keyboardUp" @press="key" />
+        </Transition>
         <div class="px-3">
           <button
             type="button"

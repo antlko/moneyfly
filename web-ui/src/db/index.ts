@@ -19,6 +19,8 @@ class MoneyflyDB extends Dexie {
   budget!: EntityTable<Row, 'id'>
   recurring_rule!: EntityTable<Row, 'id'>
   user_setting!: EntityTable<Row, 'id'>
+  /** What an account held at the end of a month — the capital check-in. */
+  account_snapshot!: EntityTable<Row, 'id'>
 
   /** Operations written locally and not yet acknowledged by the server. */
   outbox!: EntityTable<OutboxOp, 'key'>
@@ -54,6 +56,11 @@ class MoneyflyDB extends Dexie {
       // instead of duplicating — the same idempotence the server's UNIQUE index
       // gives, for the same reason.
       fx_rate: 'key, quote, asOf',
+    })
+    this.version(3).stores({
+      // Read whole (a few rows per account per month) and grouped in memory,
+      // so only the indexes a direct lookup would use.
+      account_snapshot: 'id, deleted, month, accountId',
     })
   }
 

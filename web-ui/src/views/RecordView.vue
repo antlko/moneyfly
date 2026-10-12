@@ -16,10 +16,12 @@ import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
 import { useClampOnCurrencyChange } from '@/lib/currencyClamp'
+import { dismissKeyboard, leaveAtOnce, useSystemKeyboard } from '@/lib/keyboard'
 import { exponent, toMajor, toMinor } from '@/lib/money'
 import { nextOccurrence, today, type RecurringFreq } from '@/lib/period'
 import { db } from '@/db'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useRecordBurstStore } from '@/stores/recordBurst'
 import { useRecurringStore } from '@/stores/recurring'
 import { SETTING, useSettingsStore } from '@/stores/settings'
 import { useTaxonomyStore } from '@/stores/taxonomy'
@@ -43,6 +45,7 @@ const taxonomy = useTaxonomyStore()
 const settings = useSettingsStore()
 const recurring = useRecurringStore()
 const notify = useNotifyStore()
+const bursts = useRecordBurstStore()
 
 /*
  * One screen, two steps — the amount, then the category. Not two routes: going
@@ -142,6 +145,13 @@ const roundingNote = ref('')
 useClampOnCurrencyChange(currency, calc, ({ before, after, currency: code }) => {
   roundingNote.value = `${code} has no minor unit — ${before} rounded to ${after}`
 })
+
+/**
+ * The keypad steps aside while the phone's own keyboard is up for the note, and
+ * comes back once it has gone — see `useSystemKeyboard` for why "gone" is read
+ * off the viewport rather than off `blur`.
+ */
+const keyboardUp = useSystemKeyboard()
 
 const amount = computed(() => display(calc.value))
 const hasAmount = computed(() => total(calc.value) > 0)
@@ -263,9 +273,19 @@ async function record(category: Row) {
     await settings.set(SETTING.lastAccount, payingAccount)
   }
 
-  // Deliberately silent when creating: a toast covers the bottom of the
-  // dashboard you were just returned to — including the record buttons — and
-  // the record is visible on the chart the moment you land.
+  // Deliberately no toast when creating: one covers the bottom of the
+  // dashboard you were just returned to — including the record buttons. The
+  // dashboard answers instead, with the record rising out of the button that
+  // started it (RecordBurst), which covers nothing and takes no taps.
+  if (!editing.value) {
+    bursts.announce({
+      kind: kind.value,
+      icon: category.icon,
+      color: category.color,
+      amountMinor,
+      currency: currency.value,
+    })
+  }
 
   // Jump to the period the record belongs to, not whichever one happened to be
   // open — recording something dated last week and landing on a chart that does
@@ -355,14 +375,18 @@ function back() {
           type="text"
           placeholder="Add note"
           maxlength="140"
+          enterkeyhint="done"
           class="w-full bg-transparent outline-none placeholder:text-mf-muted"
+          @keydown.enter="dismissKeyboard"
         />
       </label>
 
       <div
         class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]"
       >
-        <AmountKeypad @press="key" />
+        <Transition name="mf-reveal" @leave="leaveAtOnce">
+          <AmountKeypad v-show="!keyboardUp" @press="key" />
+        </Transition>
         <div class="flex gap-2 px-3">
           <button
             type="button"

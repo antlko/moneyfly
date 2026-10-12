@@ -425,6 +425,7 @@ func TestAllEntitiesRoundTrip(t *testing.T) {
 		{Entity: "budget", ID: "b1", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"limitMinor":50000,"currency":"EUR"}`)},
 		{Entity: "recurring_rule", ID: "r1", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"kind":"expense","freq":"monthly","nextOn":"2026-09-01","amountMinor":-1200,"currency":"EUR"}`)},
 		{Entity: "user_setting", ID: "view.mode", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"value":"donut"}`)},
+		{Entity: "account_snapshot", ID: "a1:2026-08", Lamport: 1, DeviceID: "d", Data: json.RawMessage(`{"accountId":"a1","month":"2026-08","amountMinor":120000,"currency":"EUR"}`)},
 	}
 	res, err := d.ApplyOps(u.ID, ops)
 	if err != nil {

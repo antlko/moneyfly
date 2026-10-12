@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Plus, RefreshCw, X } from '@lucide/vue'
+import { ArrowLeftRight, Plus, RefreshCw, X } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useNotifyStore } from '@/stores/notify'
 
@@ -9,7 +9,9 @@ import RateSheet from '@/components/monefy/RateSheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
 import { currencyName } from '@/lib/currencies'
 import { STORAGE_BASE, type Ratio } from '@/lib/fx'
-import { exponent } from '@/lib/money'
+import { exponent, toMinor } from '@/lib/money'
+import { today } from '@/lib/period'
+import MoneyAmount from '@/components/monefy/MoneyAmount.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useFxStore } from '@/stores/fx'
 import { SETTING, useSettingsStore } from '@/stores/settings'
@@ -130,6 +132,37 @@ async function saveRate(code: string, { rate, asOf }: { rate: string; asOf: stri
 }
 
 /**
+ * A converter between the currencies on the list, at today's rate.
+ *
+ * The question this screen gets asked most is not "what is the rate" but "how
+ * much is 12,000 forint" — and answering it with the rates already cached here
+ * means it works offline, and agrees to the cent with every total in the app,
+ * because it is the same conversion (fx.convert).
+ */
+const convertAmount = ref('100')
+const convertFrom = ref(dashboard.baseCurrency)
+const convertTo = ref<string>('')
+watch(
+  enabled,
+  (codes) => {
+    // Converting a currency into itself is only the default until there is
+    // a second one to offer.
+    if (!convertTo.value || !codes.includes(convertTo.value) || convertTo.value === convertFrom.value) {
+      convertTo.value = codes.find((c) => c !== convertFrom.value) ?? convertFrom.value
+    }
+  },
+  { immediate: true },
+)
+const converted = computed(() => {
+  const amount = Number(convertAmount.value)
+  if (!Number.isFinite(amount) || !convertTo.value) return null
+  return fx.convert(toMinor(amount, convertFrom.value), convertFrom.value, convertTo.value, today())
+})
+function swapConvert() {
+  ;[convertFrom.value, convertTo.value] = [convertTo.value, convertFrom.value]
+}
+
+/**
  * How stale is too stale. Rates do not move at weekends, so a couple of days is
  * normal; a week means the refresh has been failing and nobody noticed, which is
  * the failure this screen exists to surface.
@@ -154,6 +187,7 @@ const STALE_AFTER_DAYS = 5
           type="button"
           class="grid size-11 place-items-center"
           aria-label="Add a currency"
+          title="Add a currency"
           @click="showPicker = true"
         >
           <Plus :size="22" :stroke-width="2" />
@@ -161,10 +195,13 @@ const STALE_AFTER_DAYS = 5
       </template>
     </ScreenHeader>
 
-    <main class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:w-full sm:max-w-2xl">
-      <p v-if="notice" class="mx-4 mt-3 rounded-lg bg-mf-green-soft/40 p-2.5 text-sm">
+    <main
+      class="flex-1 space-y-4 overflow-y-auto p-4 pb-[calc(1rem+var(--spacing-safe-b))] sm:mx-auto sm:grid sm:w-full sm:max-w-5xl sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:items-start sm:gap-4 sm:space-y-0 sm:p-0"
+    >
+      <p v-if="notice" class="rounded-lg bg-mf-green-soft/40 p-2.5 text-sm sm:col-span-2">
         {{ notice }}
       </p>
+      <div class="space-y-4">
       <section class="rounded-2xl bg-mf-surface p-4">
         <h2 class="mb-1 font-medium">Base currency</h2>
         <p class="text-2xl">{{ dashboard.baseCurrency }}</p>
@@ -173,6 +210,52 @@ const STALE_AFTER_DAYS = 5
           paid for it and is converted at the rate on the day it happened.
         </p>
       </section>
+
+      <section class="rounded-2xl bg-mf-surface p-4">
+        <h2 class="mb-3 font-medium">Convert</h2>
+        <div class="flex items-center gap-2">
+          <input
+            v-model="convertAmount"
+            type="number"
+            min="0"
+            aria-label="Amount"
+            class="min-w-0 flex-1 rounded-lg border border-mf-muted/60 bg-mf-surface px-3 py-2 text-right tabular-nums outline-none focus:border-mf-green"
+          />
+          <select
+            v-model="convertFrom"
+            aria-label="From"
+            class="rounded-lg border border-mf-muted/60 bg-mf-surface px-2 py-2 outline-none focus:border-mf-green"
+          >
+            <option v-for="code in enabled" :key="code" :value="code">{{ code }}</option>
+          </select>
+        </div>
+        <div class="my-2 flex items-center gap-2">
+          <button
+            type="button"
+            class="grid size-8 place-items-center rounded-full bg-mf-green-soft/40 text-mf-green-dark"
+            aria-label="Swap currencies"
+            @click="swapConvert"
+          >
+            <ArrowLeftRight :size="16" />
+          </button>
+          <span class="h-px flex-1 bg-mf-muted/30" />
+        </div>
+        <div class="flex items-center gap-2">
+          <p class="min-w-0 flex-1 truncate px-3 py-2 text-right text-xl font-semibold">
+            <MoneyAmount v-if="converted !== null" :minor="converted" :currency="convertTo" />
+            <span v-else class="text-sm font-normal text-mf-muted">no rate yet</span>
+          </p>
+          <select
+            v-model="convertTo"
+            aria-label="To"
+            class="rounded-lg border border-mf-muted/60 bg-mf-surface px-2 py-2 outline-none focus:border-mf-green"
+          >
+            <option v-for="code in enabled" :key="code" :value="code">{{ code }}</option>
+          </select>
+        </div>
+        <p class="mt-2 text-xs text-mf-muted">At today's rate — the same one every total in the app uses.</p>
+      </section>
+      </div>
 
       <section class="rounded-2xl bg-mf-surface">
         <div class="flex items-baseline justify-between p-4 pb-2">
@@ -246,7 +329,7 @@ const STALE_AFTER_DAYS = 5
         </p>
       </section>
 
-      <p v-if="fx.lastError" class="rounded-2xl bg-mf-red/15 p-4 text-sm text-mf-red-text">
+      <p v-if="fx.lastError" class="rounded-2xl bg-mf-red/15 p-4 text-sm text-mf-red-text sm:col-span-2">
         Could not reach the server: {{ fx.lastError }}. Anything below is what this device already
         had, and conversion carries on using it.
       </p>

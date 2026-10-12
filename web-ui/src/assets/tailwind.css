@@ -52,6 +52,29 @@
   --color-cat-slate: #a8b0a8;
   --color-cat-teal: #4fb3a5;
 
+  /*
+    Chart series (components/charts). Not the category palette: those colours
+    were picked to look like Monefy's icons, not to stay apart for colour-blind
+    readers. These are the dataviz skill's documented categorical slots, in its
+    fixed order, and every pair a chart puts side by side was run through its
+    validator against the white card surface (CVD ΔE ≥ 9 on every pairing
+    used; chart-3/4/5 sit under 3:1 contrast, so they only appear with a
+    labelled legend and the capital table as the table view).
+
+    Assigned by meaning, once, so a colour means the same thing on every chart
+    on the page: chart-1 net worth, chart-3 income, chart-2 spending.
+  */
+  --color-chart-1: #2a78d6;
+  --color-chart-2: #eb6834;
+  --color-chart-3: #1baf7a;
+  --color-chart-4: #eda100;
+  --color-chart-5: #e87ba4;
+  --color-chart-6: #008300;
+  --color-chart-7: #4a3aa7;
+  --color-chart-8: #e34948;
+  /* Gridlines and axes: one recessive step off the surface, solid hairlines. */
+  --color-chart-grid: #e6ece8;
+
   /* The mobile shell is a fixed-height app frame, not a scrolling document. */
   --spacing-safe-b: env(safe-area-inset-bottom, 0px);
   --spacing-safe-t: env(safe-area-inset-top, 0px);
@@ -261,34 +284,21 @@
 }
 
 /*
-  The dashboard body trading between donut and list.
+  Something returning to a space it was taken out of — the record screen's
+  keypad, once the phone's own keyboard has gone (lib/keyboard.ts).
 
-  The two states are one screen drawn twice, so the motion says "redrawn", not
-  "navigated": the outgoing one settles back a little as it fades, the incoming
-  one rises the same distance into place. Enough to see where the list came
-  from, not enough to feel like a page.
-
-  `mode="out-in"` pays the duration twice, so the halves are unequal — the exit
-  is brisk and the entrance takes its time, which is what makes the arrival the
-  part you notice rather than the departure.
+  A fade in place, with no travel: a finger may already be on its way to a key,
+  and nothing may still be moving where it lands. And **no leave at all** —
+  no leave rule here, and `@leave="leaveAtOnce"` at the call site so Vue does
+  not even wait the two frames it takes to discover that. Something making way
+  for the keyboard has to be out of the layout before the viewport shrinks, and
+  a keypad still on its way out is a keypad still taking up the room.
 */
-.mf-swap-enter-active {
-  transition:
-    opacity 170ms var(--mf-ease),
-    transform 170ms var(--mf-ease-panel);
+.mf-reveal-enter-active {
+  transition: opacity var(--mf-duration) var(--mf-ease);
 }
-.mf-swap-leave-active {
-  transition:
-    opacity 110ms var(--mf-ease),
-    transform 110ms var(--mf-ease);
-}
-.mf-swap-enter-from {
+.mf-reveal-enter-from {
   opacity: 0;
-  transform: translateY(14px) scale(0.985);
-}
-.mf-swap-leave-to {
-  opacity: 0;
-  transform: translateY(-6px) scale(0.985);
 }
 
 /*
@@ -364,6 +374,28 @@
 }
 
 /*
+  At the desktop breakpoint a sheet is a centred dialog (ModalSheet.vue), and a
+  dialog does not slide up from the bottom of a monitor: it rises a few pixels
+  and fades in where it will sit. The fade is the one exception to "panels
+  travel at full opacity" above — that rule exists for something crossing most
+  of the screen, where a half-transparent panel reads as a ghost; twelve pixels
+  is over before there is anything to read.
+*/
+@media (min-width: 640px) {
+  .mf-sheet-enter-from > *,
+  .mf-sheet-leave-to > * {
+    transform: translateY(12px) scale(0.98);
+    opacity: 0;
+  }
+  .mf-sheet-enter-active > *,
+  .mf-sheet-leave-active > * {
+    transition:
+      transform var(--mf-duration) var(--mf-ease-panel),
+      opacity var(--mf-duration) var(--mf-ease);
+  }
+}
+
+/*
   Route changes. Both screens are absolutely positioned during the swap,
   otherwise the outgoing one still occupies the flow and the incoming one is
   pushed below the fold for the length of the transition.
@@ -379,6 +411,86 @@
 }
 .mf-page-leave-to {
   opacity: 0;
+}
+
+/*
+  The record burst (RecordBurst.vue): what rises out of a record button after a
+  new record is saved, the way reactions float up a live stream.
+
+  Three nested elements, three motions, because each needs its own curve and one
+  `transform` can only carry one: the **rise** decelerates (quick off the button,
+  drifting at the top), the **sway** is a steady ease-in-out back and forth for
+  as long as it lives, and the **pop** is the scale-in and the fade-out. Every
+  particle sets its own `--rise`, `--drift`, `--sway`, `--tilt`, `--dur`,
+  `--sway-dur` and `--delay`, which is what makes a stream of identical icons
+  look like a stream rather than a column.
+
+  Fill mode `both` matters twice: before its delay a particle holds the first
+  frame (invisible), and after it, the last (also invisible) — so nothing
+  flashes either side of the animation, and reduced motion collapses the whole
+  thing to nothing rather than to a frozen icon.
+*/
+@keyframes mf-burst-rise {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(var(--drift), calc(var(--rise) * -1));
+  }
+}
+@keyframes mf-burst-sway {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0deg);
+  }
+  25% {
+    transform: translateX(var(--sway)) rotate(var(--tilt));
+  }
+  75% {
+    transform: translateX(calc(var(--sway) * -1)) rotate(calc(var(--tilt) * -1));
+  }
+}
+@keyframes mf-burst-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  14% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  26% {
+    transform: scale(1);
+  }
+  62% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+@keyframes mf-burst-ring {
+  from {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+.mf-burst-rise {
+  animation: mf-burst-rise var(--dur) cubic-bezier(0.2, 0.6, 0.35, 1) var(--delay) both;
+}
+.mf-burst-sway {
+  animation: mf-burst-sway var(--sway-dur) ease-in-out var(--delay) infinite;
+}
+.mf-burst-pop {
+  animation: mf-burst-pop var(--dur) linear var(--delay) both;
+}
+.mf-burst-ring {
+  animation: mf-burst-ring 700ms var(--mf-ease) var(--delay) both;
 }
 
 /*

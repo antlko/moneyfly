@@ -115,7 +115,7 @@ The protocol, and why it is shaped this way, is [SYNC.md](SYNC.md). All four req
 ```jsonc
 // One operation. `data` is the row body; the server validates its shape, not its references.
 {
-  "entity": "txn",             // account | category | txn | budget | recurring_rule | user_setting
+  "entity": "txn",             // account | category | txn | budget | recurring_rule | user_setting | account_snapshot
   "id": "0199…",               // UUIDv7, minted on the client
   "lamport": 412,
   "deviceId": "0199…",
@@ -123,6 +123,10 @@ The protocol, and why it is shaped this way, is [SYNC.md](SYNC.md). All four req
   "data": { "kind": "expense", "occurredOn": "2026-08-03", "amountMinor": -1440, "currency": "EUR" }
 }
 ```
+
+An `account_snapshot` (a monthly capital check-in, ARCHITECTURE.md §4f) has the body
+`{accountId, month: "YYYY-MM", amountMinor, currency}` — the amount in the account's own currency,
+negative allowed — and the id `<accountId>:<month>`, so every device writes one row per cell.
 
 The account comes from the session; any `userId` in the payload is ignored. A **conflict is not an
 error** — the losing op is silently not applied, which is what makes retrying a push safe. Only a
@@ -309,7 +313,7 @@ are written at.
 | --- | --- | --- |
 | `GET` | `/api/imports` | Imports that still have live records, newest first |
 | `DELETE` | `/api/imports/:id` | Tombstone every live record that import wrote. 404 for an id the caller does not own |
-| `POST` | `/api/data/erase` | `{scope}` — `"records"`: every transaction; `"everything"`: transactions, recurring rules, budgets, accounts, categories. Settings (`user_setting`) are never erased |
+| `POST` | `/api/data/erase` | `{scope}` — `"records"`: every transaction; `"everything"`: transactions, recurring rules, budgets, capital check-ins (`account_snapshot`), accounts, categories. Settings (`user_setting`) are never erased |
 
 ```jsonc
 // GET /api/imports

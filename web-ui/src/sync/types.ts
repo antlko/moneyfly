@@ -6,6 +6,7 @@ export const ENTITIES = [
   'budget',
   'recurring_rule',
   'user_setting',
+  'account_snapshot',
 ] as const
 
 export type Entity = (typeof ENTITIES)[number]

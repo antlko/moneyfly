@@ -84,7 +84,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const step = (delta: number) => setPeriod(shiftPeriod(period.value, delta))
   /** Whether paging makes sense — "all time" has no neighbours. */
   const pageable = computed(() => period.value.kind !== 'all')
-  const toggleView = () => settings.set(SETTING.view, view.value === 'donut' ? 'list' : 'donut')
+  const setView = (mode: ViewMode) => settings.set(SETTING.view, mode)
+  const toggleView = () => setView(view.value === 'donut' ? 'list' : 'donut')
   const toggleSort = () => settings.set(SETTING.sort, sort.value === 'amount' ? 'name' : 'amount')
 
   const baseCurrency = computed(() => auth.user?.baseCurrency ?? 'EUR')
@@ -255,6 +256,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     goToDay,
     goToNow,
     step,
+    setView,
     toggleView,
     toggleSort,
   }

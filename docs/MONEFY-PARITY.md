@@ -139,16 +139,47 @@ finger is about to land.
 period is negative. `⇩🏷` on the right controls sort order. In donut mode a second `≡` appears on the
 right of the pill (the screenshot shows the pill flanked by two of them).
 
-**The balance pill is also a handle, and its two gestures do the two things the row offers.**
+**The balance row is also a handle — the handle of the list.** Donut mode and list mode are not two
+layouts; they are the two resting positions of one sheet (`components/monefy/PullUpSheet.vue`):
 
-* **Tap** — opens a panel listing every record in the period, grouped by day, newest first. Dragging
-  it back down, or tapping outside, closes it.
-* **Swipe up** — switches between donut and list: exactly what the `≡` beside it does. One action,
-  two ways to reach it — the button for people who look for one, the gesture for people who don't.
+```
+docked (donut mode)                  pulled up (list mode)
+┌──────────────────────┐             ┌──────────────────────┐
+│  carousel            │             │  carousel            │
+│                      │             │ ≡ [ Balance ]  ⇩🏷   │ ← handle, under the carousel
+│      donut           │   drag ↑    │  House        €734   │
+│                      │  ───────▶   │  Food         €218   │
+│                      │   ◀───────  │  …                   │ ← the sheet's body: the list
+│ ≡ [ Balance ]   ≡    │   drag ↓    │                      │
+├──────────────────────┤             ├──────────────────────┤
+│  ( − )      ( + )    │             │  ( − )      ( + )    │
+└──────────────────────┘             └──────────────────────┘
+```
 
-This is a deliberate departure from the reference, where the swipe also opens the records panel. A
+* **Drag** — the row and the list under it follow the finger, up or down, and the donut recedes a
+  little behind them (scaled to 94%, half opacity at the top). On release a **flick** decides by
+  direction however short it was; a slow drag commits once it has covered **a quarter** of the way and
+  otherwise springs back (`lib/sheet.ts`, with tests). While it travels the sheet has rounded top
+  corners and an edge shadow; at rest it has neither, so both positions are pixel-for-pixel the
+  reference's two layouts.
+* **Tap `≡`** — the same travel, animated (`--mf-duration-panel`, `--mf-ease-panel`).
+* **Tap the pill** — opens a panel listing every record in the period, grouped by day, newest first.
+  Dragging it back down, or tapping outside, closes it.
+* **Horizontal swipe** pages the period over whichever layer is showing: the donut and the list each
+  keep their own pager, and the balance row stays still while either one moves.
+
+A drag that ends over `≡` or the pill must not then *also* tap it, so the sheet swallows the click a
+drag ends with (capture phase, on the handle) — and resets that on every press, so a drag that
+produced no click (touch, usually) cannot eat the next honest tap.
+
+The gesture starts on the handle and is then **followed on `window`**, not on the handle. A finger is
+implicitly captured by what it lands on; a mouse is not, and a quick drag leaves a 56px strip on its
+first move. Pointer capture would fix that and break the row's taps — the click that ends a tap is
+retargeted to whatever holds capture rather than to the button pressed.
+
+This is a deliberate departure from the reference, where the swipe opens the records panel. A
 gesture that reaches something no button reaches reads as a third, hidden feature; a gesture that
-doubles a visible control teaches itself.
+does what the visible `≡` does, only under the finger, teaches itself.
 
 That panel must not look like a different application. It was once a short bottom sheet with its own
 row design and a text `Close` button, so the gesture landed you somewhere unrecognisable — the
@@ -163,7 +194,8 @@ itself as the cursor moved, and the balance pill never received its own gesture.
 
 ### List mode
 
-One row per category, sorted by amount descending:
+The pulled-up position of the balance row's sheet (see above). One row per category, sorted by amount
+descending:
 
 `⌄ chevron · category icon in its colour · name · green count badge · amount in red, right-aligned`
 
@@ -193,6 +225,8 @@ everywhere.
 
 ### Donut mode
 
+The docked position: the sheet shows only its handle, over the record buttons.
+
 - An SVG ring of per-category slices.
 - Percentage labels outside the ring with leader lines to their slice.
 - Icons for **every** category arranged around the ring; unused ones are dimmed rather than hidden.
@@ -217,6 +251,21 @@ the gaps proportionally puts one squarely on top of a percentage.
 Two large circles on the bottom edge: red `−` (expense) on the left, green `+` (income) on the
 right. White fill, thick coloured border, coloured glyph. They must sit above
 `env(safe-area-inset-bottom)` so the iPhone home indicator never overlaps them.
+
+**A new record rises out of the button that started it** (`RecordBurst.vue`), the way reactions
+float up a live stream: one ring pulses out of the button, a white chip with the category icon and the
+amount lifts off it, and a stream of eight small bubbles of the category's icon rises around it, each
+swaying side to side on its own rhythm and drifting towards the middle of the screen before it fades.
+About two seconds, then gone.
+
+* It replaces a toast, which is the reason there was none: a toast sat over the very buttons it was
+  confirming. The burst covers nothing for long and **takes no taps** (`pointer-events: none`), so the
+  next record button press lands on the button, not on something passing over it.
+* The record screen cannot play it — it is leaving — and the dashboard cannot tell a *new* record from
+  one that arrived by sync, which must not set anything off. So the record screen leaves a note in
+  `stores/recordBurst.ts` and the dashboard takes it, once, as it mounts. **Edits leave no note.**
+* It lives inside the button's own box, so it starts from the button with nothing to measure.
+* Under reduced motion it is not shown at all — every frame of it is decoration.
 
 ---
 
@@ -263,6 +312,26 @@ account to match puts a euro expense on a forint wallet the moment the two disag
 
 The keypad is **the app's own**, not the OS keyboard: bigger targets, no layout shift, no zoom. The
 operator keys are real — it is a calculator, so `12.40 + 3` then `=` is a valid way to enter a total.
+
+**…and while the OS keyboard is up anyway, for the note, the keypad steps aside** (`useSystemKeyboard`,
+`lib/keyboard.ts`; the transfer screen does the same for its note and "Received" field). Android
+shrinks the viewport for the keyboard (`interactive-widget=resizes-content`), the screen's column runs
+out of height, and a keypad anchored to the bottom of a `flex-1` column overflows *upwards* — straight
+over the amount and the note being typed. Two keyboards on one screen is one too many, so:
+
+* it hides **on focus**, before the viewport moves — not a frame after the resize, which would draw the
+  overlap once;
+* it comes back **when the viewport has grown back**, not on `blur` — after "Done" the keyboard is still
+  sliding away and the column is still short;
+* if the keyboard closes **without a blur** — Android's back gesture and the keyboard's own hide key do
+  exactly that — the field is blurred for it, so the keypad is not left hidden under a screen with no
+  keyboard on it. Not within 400ms of a fresh focus, though: re-tapping the note while the keyboard is
+  still going down can deliver the "it grew" resize after the tap;
+* the hide goes through `@leave="leaveAtOnce"` on its `<Transition>`: without it Vue waits two
+  animation frames to discover there is no leave transition, and those are two frames of overlap;
+* touch only — a desktop has room for both and a physical keyboard.
+
+The note's return key is "Done" (`enterkeyhint`), and it closes the keyboard.
 
 Details that are easy to get wrong, all covered by `lib/calculator.test.ts`:
 
@@ -449,9 +518,21 @@ Both curves decelerate hard at the end, which is what makes a sheet look like it
 stopped; the panel curve more so. A drawer crosses most of the screen where a fade crosses nothing,
 and at 200ms that distance is covered fast enough to read as a jump with a smear on it.
 
-Five named transitions build on them — `mf-fade`, `mf-sheet`, `mf-drawer-l`, `mf-drawer-r`,
-`mf-page` — and they are applied by wrapping the `v-if` **at the call site**, because a `v-if` on its
-own cannot animate a departure and the departure is the half people notice.
+Six named transitions build on them — `mf-fade`, `mf-sheet`, `mf-drawer-l`, `mf-drawer-r`,
+`mf-page`, and the enter-only `mf-reveal` (the record keypad coming back, §2 Step A) — and they are
+applied by wrapping the `v-if` **at the call site**, because a `v-if` on its own cannot animate a
+departure and the departure is the half people notice.
+
+At the desktop breakpoint `mf-sheet` changes shape with the sheet: every sheet sits in
+`ModalSheet.vue`, a bottom sheet on a phone and a centred dialog on a desktop, and a dialog rises
+twelve pixels and fades rather than sliding up from the bottom of a monitor. That fade is the one
+exception to "panels travel at full opacity" below — the rule exists for something crossing most of
+the screen; twelve pixels is over before there is anything to read as a ghost.
+
+Two things move without a named transition. The dashboard's pull-up sheet (§1 "View toggle row")
+writes its own `transform` from the finger while dragging and hands it to the panel tokens on release.
+The record burst (§1 "Record buttons") is three `mf-burst-*` keyframes on three nested elements —
+rise, sway and pop each need their own curve, and one `transform` can only carry one.
 
 **An overlay is two things moving at once, and they must not move the same way: the scrim darkens,
 the panel travels at full opacity.** The dimming is animated as `background-color` on the overlay

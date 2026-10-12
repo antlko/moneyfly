@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Search } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, useTemplateRef } from 'vue'
 
 import { searchCurrencies } from '@/lib/currencies'
+import { focusUnlessTouch } from '@/lib/keyboard'
+import ModalSheet from './ModalSheet.vue'
 
 /**
  * Pick a currency to turn on.
@@ -16,22 +18,22 @@ const props = defineProps<{ enabled: string[] }>()
 defineEmits<{ select: [string]; close: [] }>()
 
 const query = ref('')
+const search = useTemplateRef<HTMLInputElement>('search')
+onMounted(() => focusUnlessTouch(search.value))
 const results = computed(() => searchCurrencies(query.value))
 const has = (code: string) => props.enabled.includes(code)
 </script>
 
 <template>
-  <div
-    class="fixed inset-0 z-50 flex flex-col justify-end mf-scrim"
-    @click.self="$emit('close')"
-  >
-    <section class="flex max-h-[80%] flex-col rounded-t-2xl bg-mf-bg">
-      <header class="shrink-0 px-4 pt-2 pb-3">
-        <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-mf-muted" />
+  <ModalSheet label="Add a currency" @close="$emit('close')">
+    <section class="flex min-h-0 flex-1 flex-col sm:h-[min(70vh,40rem)]">
+      <header class="shrink-0 px-4 pt-2 pb-3 sm:pt-5">
+        <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-mf-muted sm:hidden" />
         <h2 class="mb-3 text-base font-medium">Add a currency</h2>
         <label class="flex items-center gap-2 rounded-full bg-mf-surface px-3 py-2">
           <Search :size="18" :stroke-width="2" class="shrink-0 text-mf-muted" />
           <input
+            ref="search"
             v-model="query"
             type="search"
             placeholder="Code or name"
@@ -41,9 +43,7 @@ const has = (code: string) => props.enabled.includes(code)
         </label>
       </header>
 
-      <ul
-        class="min-h-0 flex-1 divide-y divide-mf-muted/20 overflow-y-auto pb-[calc(1rem+var(--spacing-safe-b))]"
-      >
+      <ul class="min-h-0 flex-1 divide-y divide-mf-muted/20 overflow-y-auto pb-4">
         <li v-for="option in results" :key="option.code">
           <button
             type="button"
@@ -61,5 +61,5 @@ const has = (code: string) => props.enabled.includes(code)
         </li>
       </ul>
     </section>
-  </div>
+  </ModalSheet>
 </template>

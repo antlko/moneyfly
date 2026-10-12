@@ -3,6 +3,7 @@ import { ref } from 'vue'
 
 import { CATEGORY_COLORS, CATEGORY_ICONS, colorVar, type CategoryColor } from '@/lib/categories'
 import CategoryIcon from './CategoryIcon.vue'
+import ModalSheet from './ModalSheet.vue'
 
 const props = defineProps<{ kind: 'expense' | 'income' }>()
 const emit = defineEmits<{
@@ -24,11 +25,8 @@ function submit() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end mf-scrim" @click.self="$emit('cancel')">
-    <form
-      class="max-h-[85%] w-full space-y-4 overflow-y-auto rounded-t-2xl bg-mf-bg p-4 pb-[calc(1rem+var(--spacing-safe-b))]"
-      @submit.prevent="submit"
-    >
+  <ModalSheet :label="`New ${kind} category`" @close="$emit('cancel')">
+    <form class="space-y-4 p-4 sm:p-6" @submit.prevent="submit">
       <h2 class="text-lg font-medium">New {{ kind }} category</h2>
 
       <input
@@ -88,5 +86,5 @@ function submit() {
         </button>
       </div>
     </form>
-  </div>
+  </ModalSheet>
 </template>

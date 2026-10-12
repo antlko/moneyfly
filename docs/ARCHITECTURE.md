@@ -338,6 +338,15 @@ from each other), read in exactly two places:
   shortcuts, sync status) — once, at the top, rather than each screen growing its own copy. Signed-out
   routes (`meta.public`: sign-in, the 404) are excluded even at desktop width: the sidebar links to
   screens nobody can reach yet and would show an account that does not exist.
+
+  The sidebar sits **flush against the window's left edge** (the content area is what gets a
+  `max-w-[1280px]`, centred in what is left), and **collapses to a 72px icon rail** — with a round
+  chevron that sits on the sidebar's right edge, a fifth of the way down, and fades in while the pointer
+  is over the sidebar (the Atlassian/GitLab shape; always shown on keyboard focus and on touch
+  screens, which have no hover), or with `[` when no field has focus. Only the width animates: every icon keeps its x in both
+  states and the labels fade, because things sliding sideways while a panel resizes is what makes a
+  collapse look busy. The state is remembered per device in `localStorage` (guarded — storage can be
+  blocked), not as a synced setting: how much room a sidebar deserves is a fact about the screen.
 - **`DashboardView.vue`** separately swaps its own body for `DesktopDashboardContent.vue`. This is
   the *only* screen genuinely redesigned for the width — a period selector, summary cards, a category
   breakdown, account balances, a recent-records table — because it is the only one whose mobile layout
@@ -356,27 +365,107 @@ added. Two small, shared adjustments carry the rest of the way, both keyed off t
   the only way in. Each screen's own header-action buttons (a `+`, a refresh icon) are left
   unstyled for colour on purpose, so the same markup reads white on the green mobile bar and
   `mf-ink` on the plain desktop one with no second version of the button either.
-- **A `sm:max-w-2xl` (or `sm:max-w-md` for the narrower record/transfer screens) on each screen's
-  own content wrapper** keeps a short list or form from stretching edge-to-edge across a wide
-  content pane. This is the one per-screen touch — a single class on the existing root element, not
-  a restructure — because the *right* width differs by content (a table wants more room than a
-  settings form), so one blanket rule on `DesktopShell` itself would be wrong for some screen either
-  way.
+- **A `sm:max-w-*` on each screen's own content wrapper** keeps a short list or form from
+  stretching edge-to-edge across a wide content pane — `sm:max-w-md` for the record/transfer
+  screens, `2xl`–`5xl` for the rest (Accounts `4xl`; Budgets and Currencies `5xl`, as a two-column
+  card grid and a two-column layout with a converter respectively; Capital takes the full width for
+  its charts and month table). This is the one per-screen touch, because the *right* width differs
+  by content, so one blanket rule on `DesktopShell` itself would be wrong for some screen either way.
+- **`ModalSheet.vue`** is the frame every sheet sits in: a bottom sheet on a phone, a **centred
+  dialog** (`sm:max-w-*`, rounded, Escape closes) at desktop width. Each sheet used to draw its own
+  scrim and a full-width panel pinned to the bottom, which on a monitor became a two-thousand-pixel
+  strip with a banner-sized Cancel button. A new sheet should use it rather than draw its own
+  overlay; the `mf-sheet` transition then slides it on a phone and rises-and-fades it on a desktop
+  (tailwind.css). Dialog fields that are typed into first are focused on open with a mouse and
+  keyboard (`focusUnlessTouch`, `lib/keyboard.ts`) — never on touch, where focus throws a keyboard
+  over the list being searched.
 
 Both switches read data from the stores the mobile screens already use — `dashboard.ts`,
 `accounts.ts`, `taxonomy.ts` — never a separate desktop computation. A total that disagreed between
 the phone and the desktop dashboard would be far worse than the desktop one looking plain.
 
 The dashboard's "By category" card draws `dashboard.byCategory` as a pie (`CategoryPie.vue`) or as
-bars, chosen by the synced `view.desktopChart` setting. Clicking a category in either one turns the
-records table under it into that category's expenses for the period — all of them, largest first,
-with total, largest and average — instead of the 50 most recent records. The selection survives
-paging between periods, so one category can be followed month to month.
+bars, chosen by the synced `view.desktopChart` setting. The **records table** under it lists every
+record in the period, with its filters on the table itself — free text (note, category, account,
+amount), category, account, and type — and **paged** (25/50/100 per page; first, last and two either
+side of the current page offered). Clicking a category in the chart is simply one way of setting the
+category filter: it also sorts largest first and shows total, share, largest and average — computed
+over exactly the rows listed, so a search on top narrows the figures with the table. Any filter or
+period change returns to page 1. The selection survives paging between periods, so one category can
+be followed month to month. The "Accounts" card heads its list with live net worth and the part of
+it ready to use (`accounts.liveTotals`) and links to Capital.
 
 **`#app` needs an explicit `height: 100vh` at this width, not `min-height`** — see the entry in
 CLAUDE.md's "Conventions that bite" before touching this rule; the short version is that a
 percentage `height` (`h-full`, which every reused mobile screen's root still has) does not resolve
 against a `min-height`-only ancestor, only a definite one.
+
+## 4f. Capital: accounts, check-ins, and what they say
+
+People who track spending usually also keep a spreadsheet of *what they have*: one row per place
+money sits (cash, each bank, gold, a deposit), one column per month, a number typed into each cell,
+and a few formulas under it — how much was saved, how long the savings would last. Capital is that
+spreadsheet, rebuilt on top of the ledger.
+
+**Accounts carry two new fields** (synced JSON, no migration — CLAUDE.md "Synced rows are JSON"):
+`group` (free text — "Cash", "Banks", "Gold"; the groups are simply the distinct values, ungrouped
+ones list under "Other") and `liquid` ("ready to use": absent means yes). The Accounts screen groups
+by them, with a subtotal per group and two headline figures, net worth and ready to use, priced
+today in the base currency.
+
+**"Set balance" moves the opening balance, never stores a balance.** `accounts.setBalance` writes
+`initialBalanceMinor + (target − derived)`, so the derived balance reads the target and every record
+stays as it was (docs/SYNC.md §2 still holds: there is no counter). It is the honest reading of "the
+app says −35,000 but I have 9,944": the records are fine, the starting point was never entered. A
+form saving other fields at the same time folds the new opening balance into the **same** `update`
+(`accounts.openingFor`) — two updates in a row would race, the second spreading the row as the live
+query last saw it.
+
+**A check-in is one synced row per account per month: `account_snapshot`**
+(`backend/internal/db/migrations/00007_account_snapshot.sql`) — `{accountId, month, amountMinor,
+currency}`, the amount in the account's own currency. Its id is `<accountId>:<YYYY-MM>`, chosen by the
+client, so two devices filling in the same cell write the same row and last-write-wins settles it —
+the `user_setting` pattern; there is no unique constraint, for the usual reason. It is a fact
+someone typed, like an opening balance, not a running total, so it does not break the derived-balance
+rule. Setting a balance on the Accounts screen also writes the current month's check-in, so the two
+screens never disagree about what you said you had.
+
+**A month with no check-in for an account carries the previous one forward** (`lib/capital.ts`
+`heldAt`), drawn faint and italic in the table: gold does not need re-typing monthly to still be
+there, and one forgotten account should not show net worth collapsing. Nothing carries *backwards*.
+Changes and composition are reported from the latest month somebody actually checked in — a month
+that only carries the previous one always "changed by €0".
+
+**The check-in form (`CheckInSheet.vue`) pre-fills every field with the best estimate**: a figure
+already typed for the month; otherwise the last check-in **plus what the records moved through the
+account since**; failing that, the ledger at the month's end. Not the raw ledger, even for the
+current month — most people never typed an opening balance, so their cash account reads −€35,000
+after a year of spending, while "last check-in + records since" is right either way. The raw ledger
+figure is offered beside the field as a link when it differs, and for the current month the form
+can also make the figures the accounts' balances (moving each opening balance).
+
+**What the table and charts compute** (`stores/capital.ts`, arithmetic in `lib/capital.ts`, tested),
+all in the base currency, check-ins priced at the month's last day (today for the running month):
+
+| Row | Meaning |
+| --- | --- |
+| Ready to use / Total | sum over accounts with a value, liquid ones / all |
+| Change | Total − previous month's Total, only when both exist |
+| Income, Spending | recorded `income` / `expense` rows in the month, priced on their own day |
+| Saved | (income − spending) ÷ income; undefined without income |
+| Unexplained | Change − (income − spending): spending nobody recorded, fees, and value moving on its own |
+| Runway | Ready to use ÷ the average of the six complete months before (the running month never averages itself) |
+| Personal inflation | average monthly spending over the last 12 complete months against the 12 before; with less history 6 vs 6 or 3 vs 3, labelled a *trend*; nothing under six months |
+
+**Charts follow the dataviz rules** (`components/charts`): one value axis per chart — two measures
+of different scale are two charts, never a second y-axis; 2px lines, columns ≤ 24px with a 4px
+rounded data end and a square base, solid hairline gridlines, a 2px surface ring on dots, a legend
+for two or more series, a crosshair tooltip that lists every series at the hovered month (arrow keys
+step through months), and text that never takes a series colour. Series colours are the
+`--color-chart-*` tokens — the skill's documented categorical slots, every pair used on one chart run
+through its validator against the white card — assigned **by meaning once per page** (chart-1 net
+worth, chart-3 income, chart-2 spending), so a colour means the same thing on every chart. The
+month table under them is the table view: every bar and line is a row there.
 
 ## 5. Where to make a change
 
@@ -388,6 +477,9 @@ against a `min-height`-only ancestor, only a definite one.
 | A screen's layout | `web-ui/src/components/monefy/*` — and check it against [MONEFY-PARITY.md](MONEFY-PARITY.md). This is the mobile layout only; the desktop dashboard has no reference screenshot to match against, since it is not a Monefy likeness at all. |
 | The desktop dashboard's own content | `web-ui/src/components/desktop/DesktopDashboardContent.vue` — reads the same stores the mobile dashboard does (`dashboard.ts`, `accounts.ts`, `taxonomy.ts`); it is a second view of the same computed data, never a second calculation of it |
 | The desktop sidebar or nav | `web-ui/src/components/desktop/DesktopShell.vue`, mounted once in `App.vue` around every route |
+| A sheet or dialog | wrap it in `web-ui/src/components/monefy/ModalSheet.vue` — bottom sheet on a phone, centred dialog on a desktop |
+| Capital figures (saved %, runway, inflation, carry-forward) | `web-ui/src/lib/capital.ts` (pure, tested) fed by `web-ui/src/stores/capital.ts`; see §4f |
+| A chart | `web-ui/src/components/charts/TimeChart.vue` (months × values) or `ShareBar.vue` (part-to-whole); ticks and labels in `web-ui/src/lib/chart.ts`; colours only from the `--color-chart-*` tokens |
 | A colour | `web-ui/src/assets/tailwind.css` `@theme` block, nowhere else |
 | Anything about currency conversion | `internal/fx` and `web-ui/src/lib/fx.ts` — **both, with their mirrored test tables** |
 | An overlay's animation | the named transitions in `web-ui/src/assets/tailwind.css`, applied by wrapping the `v-if` at the call site |
