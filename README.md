@@ -21,15 +21,21 @@
 <p align="center">
   <img src="docs/screenshots/desktop-dashboard.png" width="760" alt="Analytics dashboard on desktop">
 </p>
-<p align="center"><sub>Desktop analytics dashboard</sub></p>
+<p align="center"><sub>Desktop analytics dashboard — spending by category (pie or bars), accounts grouped with net worth and what is ready to use, and a filterable, searchable records table</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/desktop-capital.png" width="760" alt="Capital: net worth over time, where it is held, income versus spending">
+</p>
+<p align="center"><sub>Capital — a monthly check-in of what you hold, laid against income and spending</sub></p>
 
 ---
 
 > **Status: usable.** Install it, record spending in three taps, switch periods, run accounts and
 > transfers in several currencies, edit and search, set budgets and recurring records, import a
 > Monefy export, export, integrate or script against your own data, and get a real analytics
-> dashboard on a wider screen — all of it working with no connection, syncing when one returns. A
-> few PWA niceties (dark theme, a PIN lock) are still to come. See [the roadmap](#roadmap).
+> dashboard on a wider screen, with a monthly capital view of your net worth — all of it working
+> with no connection, syncing when one returns. A few PWA niceties (dark theme, a PIN lock) are
+> still to come. See [the roadmap](#roadmap).
 
 moneyfly is a personal expense tracker you run yourself. One container, one data directory, no
 account with anyone else. On a phone it works the way Monefy does, because that design is hard to
@@ -311,7 +317,7 @@ including how to test sync between two devices, are in [docs/DEVELOPMENT.md](doc
 | 6–7 | Budgets, recurring records | ✅ |
 | 8 | Monefy CSV import | ✅ |
 | 9 | Export profiles, webhooks, API tokens | ✅ |
-| 10 | Desktop analytics dashboard | ✅ |
+| 10 | Desktop analytics dashboard, account groups, capital check-ins | ✅ |
 | 11 | PWA polish, dark theme, PIN lock | ◐ installable & offline |
 
 ## Relationship to Monefy
