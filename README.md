@@ -19,7 +19,7 @@
 <p align="center"><sub>Mobile dashboard &nbsp;&nbsp;·&nbsp;&nbsp; Best easy record flow</sub></p>
 
 <p align="center">
-  <img src="docs/screenshots/desktop-dashboard.png" width="760" alt="Analytics dashboard on desktop">
+  <img src="docs/screenshots/desktop-analytics.png" width="760" alt="Analytics dashboard on desktop">
 </p>
 <p align="center"><sub>Desktop analytics dashboard — spending by category (pie or bars), accounts grouped with net worth and what is ready to use, and a filterable, searchable records table</sub></p>
 
