@@ -167,10 +167,23 @@ docked (donut mode)                  pulled up (list mode)
   Dragging it back down, or tapping outside, closes it.
 * **Horizontal swipe** pages the period over whichever layer is showing: the donut and the list each
   keep their own pager, and the balance row stays still while either one moves.
+* **Swipe down on the open list** closes the sheet too — once the list is at its top. Until then the
+  swipe scrolls the list, as any scrolling list would.
+
+The record buttons are deliberately **not** a grip. They sit on Android's own swipe-up-for-home zone,
+and a swipe that starts there goes to the system, not the page.
+
+**Every move of a drag the app owns is claimed from the browser** (`preventDefault` on `touchmove`,
+`lib/gesture.ts` — the balance row, the list's pull-down, the month pager, the records panel's
+header). `touch-action: none` alone stops scrolling but not Chrome's *fling*: a quick swipe ended in
+one, and a fling in progress spends the next tap on stopping itself — `pointerdown`/`pointerup`, no
+`click`. That was "after a swipe everything needs two taps", worse the faster the swipe. Measured on
+Android Chrome with real touch input: without the claim, 0 of 15 first taps after a fast swipe
+landed; with it, 15 of 15 (docs/DEVELOPMENT.md §"Testing touch on an Android emulator").
 
 A drag that ends over `≡` or the pill must not then *also* tap it, so the sheet swallows the click a
-drag ends with (capture phase, on the handle) — and resets that on every press, so a drag that
-produced no click (touch, usually) cannot eat the next honest tap.
+*mouse* drag ends with (capture phase) — for 50ms after the release, the same task the click arrives
+in, and never longer: a flag left set, and later a 400ms window, each ate an honest tap that followed.
 
 The gesture starts on the handle and is then **followed on `window`**, not on the handle. A finger is
 implicitly captured by what it lands on; a mouse is not, and a quick drag leaves a 56px strip on its

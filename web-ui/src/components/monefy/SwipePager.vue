@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { nextTick, onScopeDispose, ref } from 'vue'
 
+import { useClaimTouchMoves } from '@/lib/gesture'
+
 const props = withDefaults(
   defineProps<{
     disabled?: boolean
@@ -81,6 +83,14 @@ let axis: 'undecided' | 'x' | 'y' = 'undecided'
 function tracking(e: PointerEvent) {
   return activePointer === e.pointerId
 }
+
+/*
+ * Claim the moves of a swipe that is ours, or a quick month swipe ends in a
+ * fling that eats the next tap (lib/gesture.ts). Over the donut (`touch-none`)
+ * every move of a press is ours; over the scrolling list only once the
+ * gesture has turned out sideways — a vertical one is the list's to scroll.
+ */
+useClaimTouchMoves(root, () => activePointer !== null && (!props.verticalScroll || axis === 'x'))
 
 function reset() {
   activePointer = null

@@ -2,6 +2,7 @@
 import { useEventListener } from '@vueuse/core'
 import { computed, onScopeDispose, ref, useTemplateRef, watch } from 'vue'
 
+import { useClaimTouchMoves } from '@/lib/gesture'
 import {
   dragSlop,
   releaseVelocity,
@@ -26,9 +27,8 @@ import {
  *   * `handle` — what shows when docked and what the finger holds (the balance
  *     row). Taps on it go to its buttons; a drag moves the sheet.
  *   * default — the sheet's body (the category list). A drag on it moves the
- *     sheet too, once the list has nothing left to scroll that way.
- *   * `footer` — under the box (the record buttons). Also a grip: "swipe up
- *     from the bottom" is the instinct, and the bottom is where the buttons are.
+ *     sheet too, once the list has nothing left to scroll that way — swiping
+ *     an open list down from its top closes it.
  *
  * `open` is a v-model: a drag decides it on release, and a change from outside
  * (the `≡` button, a sync from another device) animates the same travel.
@@ -97,19 +97,21 @@ const shadowStyle = computed(() => ({
 }))
 
 /*
- * The gesture, in one place, fed from three grips: the handle, the footer
- * (pointer events) and the body (touch events — see below).
+ * The gesture, in one place, fed from two grips: the handle (pointer events)
+ * and the body (touch events — see below).
  *
- * **Why the body and the footer are grips at all.** A swipe that the browser is
- * allowed to treat as a pan, and that then has nothing to scroll, is not
- * harmless on a phone. WebKit counts it as a pan that is still settling and
- * spends the *next tap, anywhere in the app,* on stopping it — the same trap
- * CLAUDE.md records for `touch-action` on the document root. The list is a
- * `pan-y` region and the record buttons are `manipulation` (which allows
- * panning), so swiping down on an open list already at its top — the natural
- * way to close a sheet — or swiping up from the buttons, was exactly that: a
- * pan nothing consumed, and the next tap gone. Every vertical swipe in this
- * area now belongs either to a real scroll or to the sheet.
+ * **Every move of a drag the sheet owns is claimed from the browser**
+ * (`preventDefault` on `touchmove`, lib/gesture.ts). Without that, a quick
+ * swipe on the balance row ended in a *fling* — Chrome starts one even under
+ * `touch-action: none` — and a fling in progress spends the next tap on
+ * stopping itself: `pointerdown`/`pointerup`, no `click`. That was "after a
+ * swipe everything needs two taps", worse the faster the swipe. Reproduced and
+ * verified fixed on Android Chrome with real touch input (docs/DEVELOPMENT.md
+ * §"Testing touch on an Android emulator").
+ *
+ * Not the record buttons below the sheet, though they were briefly a grip:
+ * they sit on the system's own swipe-up-for-home zone, and a swipe starting
+ * there goes to Android, not to the page.
  *
  * Same rules as every other gesture in the app (SwipePager, RecordsSheet):
  * remember which pointer pressed, ignore a mouse that moves with no button
@@ -123,13 +125,17 @@ let from: 0 | 1 = 0
 let travel = 1
 let samples: Sample[] = []
 /**
- * Until when a click counts as the one a drag just ended with. A time window,
- * not a flag: a flag left set by a drag that produced no click (touch usually
- * does not) swallowed the next *honest* activation — a keyboard Enter on `≡`,
- * say — which is the "everything needs two taps" bug in another form.
+ * Until when a click counts as the one a drag just ended with.
+ *
+ * Only a mouse produces one: it fires `click` in the same task as the
+ * `pointerup` that ended the drag, so a few dozen milliseconds is generous,
+ * and no person taps again that fast. It used to be a flag (which, left set by
+ * a touch drag that produced no click, ate the next honest activation) and
+ * then a 400ms window (which ate a quick tap after a swipe) — both the
+ * two-taps bug in another form.
  */
 let swallowClicksUntil = 0
-const CLICK_AFTER_DRAG_MS = 400
+const CLICK_AFTER_DRAG_MS = 50
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 
@@ -174,7 +180,7 @@ function settle(velocity: number, endY = startY) {
   if ((target === 1) !== props.open) emit('update:open', target === 1)
 }
 
-/* --- Handle and footer: pointer events ------------------------------------ */
+/* --- Handle: pointer events ------------------------------------------------ */
 
 /*
  * The press starts on the grip and is then **followed on `window`**. A finger
@@ -247,6 +253,10 @@ function onUp(e: PointerEvent) {
 function onCancel(e: PointerEvent) {
   if (endGesture(e)) settle(0)
 }
+
+// The handle's drags are always the sheet's: claim every move of a press on it,
+// so a quick swipe never leaves a fling behind to eat the next tap.
+useClaimTouchMoves(handle, () => pointer !== null)
 
 /* --- Body: touch events ---------------------------------------------------- */
 
@@ -356,53 +366,41 @@ function onClickCapture(e: MouseEvent) {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
-    <div ref="stage" class="relative min-h-0 flex-1 overflow-hidden">
+  <div ref="stage" class="relative min-h-0 flex-1 overflow-hidden">
+    <div
+      class="absolute inset-x-0 top-0 flex origin-[50%_40%] flex-col"
+      :style="behindStyle"
+      :inert="progress === 1 && !dragging"
+    >
+      <slot name="behind" />
+    </div>
+
+    <section ref="sheet" class="absolute inset-0 flex flex-col bg-mf-bg" :style="sheetStyle">
+      <!-- The edge of the sheet, visible only while it travels over the donut. -->
       <div
-        class="absolute inset-x-0 top-0 flex origin-[50%_40%] flex-col"
-        :style="behindStyle"
-        :inert="progress === 1 && !dragging"
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-linear-to-t from-mf-ink/12 to-transparent"
+        :style="shadowStyle"
+      />
+
+      <div
+        ref="handle"
+        class="flex shrink-0 touch-none items-center"
+        :style="{ height: HANDLE_H }"
+        @pointerdown="onDown"
+        @click.capture="onClickCapture"
       >
-        <slot name="behind" />
+        <slot name="handle" />
       </div>
 
-      <section ref="sheet" class="absolute inset-0 flex flex-col bg-mf-bg" :style="sheetStyle">
-        <!-- The edge of the sheet, visible only while it travels over the donut. -->
-        <div
-          aria-hidden="true"
-          class="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-linear-to-t from-mf-ink/12 to-transparent"
-          :style="shadowStyle"
-        />
-
-        <div
-          ref="handle"
-          class="flex shrink-0 touch-none items-center"
-          :style="{ height: HANDLE_H }"
-          @pointerdown="onDown"
-          @click.capture="onClickCapture"
-        >
-          <slot name="handle" />
-        </div>
-
-        <div
-          ref="body"
-          class="flex min-h-0 flex-1 flex-col"
-          :inert="progress === 0 && !dragging"
-          @click.capture="onClickCapture"
-        >
-          <slot />
-        </div>
-      </section>
-    </div>
-
-    <!--
-      `touch-none` here too, deliberately: the buttons below are
-      `manipulation`, which lets a vertical swipe become a pan with nothing to
-      scroll — the tap-eating kind (see the gesture notes above). As a grip, the
-      swipe opens or closes the sheet instead. Taps are untouched.
-    -->
-    <div class="shrink-0 touch-none" @pointerdown="onDown" @click.capture="onClickCapture">
-      <slot name="footer" />
-    </div>
+      <div
+        ref="body"
+        class="flex min-h-0 flex-1 flex-col"
+        :inert="progress === 0 && !dragging"
+        @click.capture="onClickCapture"
+      >
+        <slot />
+      </div>
+    </section>
   </div>
 </template>

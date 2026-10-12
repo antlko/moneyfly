@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ChevronDown } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, ref, useTemplateRef } from 'vue'
 
+import { useClaimTouchMoves } from '@/lib/gesture'
 import { longDate } from '@/lib/period'
 import type { Row } from '@/sync/types'
 import TransactionRow from './TransactionRow.vue'
@@ -65,6 +66,11 @@ const panelStyle = computed(() =>
       },
 )
 
+// The header's drags are always the panel's: claim them, so a quick drag down
+// never leaves a fling behind to eat the next tap (lib/gesture.ts).
+const grip = useTemplateRef<HTMLElement>('grip')
+useClaimTouchMoves(grip, () => activePointer !== null)
+
 function close() {
   closing.value = true
   emit('close')
@@ -103,6 +109,7 @@ function onUp(e: PointerEvent) {
   <div class="fixed inset-0 z-40 flex flex-col justify-end mf-scrim" @click.self="close">
     <section class="flex h-[92%] flex-col rounded-t-2xl bg-mf-bg shadow-2xl" :style="panelStyle">
       <header
+        ref="grip"
         class="shrink-0 cursor-grab touch-none px-4 pt-2 pb-3"
         @pointerdown="onDown"
         @pointermove="onMove"

@@ -142,10 +142,7 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
       Each layer keeps its own pager, so a horizontal swipe changes the period
       over whichever one is showing.
     -->
-    <PullUpSheet
-      :open="dashboard.view === 'list'"
-      @update:open="setListOpen"
-    >
+    <PullUpSheet :open="dashboard.view === 'list'" @update:open="setListOpen">
       <template #behind>
         <SwipePager
           :disabled="!dashboard.pageable"
@@ -221,16 +218,14 @@ const openRecord = (row: Row) => router.push(`/edit/${row.id}`)
           />
         </div>
       </SwipePager>
-
-      <template #footer>
-        <RecordFabs
-          :burst="burst"
-          @expense="router.push('/new/expense')"
-          @income="router.push('/new/income')"
-          @burst-done="burst = null"
-        />
-      </template>
     </PullUpSheet>
+
+    <RecordFabs
+      :burst="burst"
+      @expense="router.push('/new/expense')"
+      @income="router.push('/new/income')"
+      @burst-done="burst = null"
+    />
 
     <Transition name="mf-sheet">
       <RecordsSheet

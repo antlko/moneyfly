@@ -86,6 +86,54 @@ dev server. And remember it caches: after rebuilding, load the page **with the s
 worker can fetch the new bundle, then take the network away. Skipping that step tests the previous
 build and is a reliable way to conclude a fix did not work when it did.
 
+## Testing touch on an Android emulator
+
+**Desktop browsers, device emulation and synthetic events do not reproduce touch bugs.** A mouse
+click in DevTools' device mode is still a mouse click, and a `TouchEvent` built in JS runs your
+handlers but never Chrome's gesture detector — which is where flings, tap suppression and
+`pointercancel` come from. The "two taps after a swipe" bug (CLAUDE.md, `lib/gesture.ts`) passed every
+check of that kind and failed 15 times out of 15 on a real Android Chrome. An emulator with
+`adb shell input` sends real touch input through the real pipeline:
+
+```bash
+~/Library/Android/sdk/emulator/emulator -avd <your AVD> -no-snapshot-save
+```
+
+```bash
+adb reverse tcp:5173 tcp:5173 && adb reverse tcp:5007 tcp:5007
+```
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d http://localhost:5173/ com.android.chrome
+```
+
+Then drive it — coordinates are physical pixels, so map from CSS with the device pixel ratio and
+Chrome's toolbar height (2.625 and 211px on a 1080×2400 Pixel-class image; read `devicePixelRatio`
+and calibrate the offset with one tap):
+
+```bash
+adb shell input swipe 540 2075 540 868 120
+```
+
+```bash
+adb shell input tap 540 691
+```
+
+To see what the page received, forward Chrome's DevTools socket and evaluate JS over the protocol
+(Node 22+ has `fetch` and `WebSocket` built in): connect to the page's `webSocketDebuggerUrl` from
+`http://localhost:9222/json` and send `Runtime.evaluate`. A capture-phase logger of `pointerdown`,
+`pointerup`, `pointercancel` and `click` on `window` tells the tap-eaten case (pointer events, no
+click) from the missed-target case (a click, on the wrong element) at a glance.
+
+```bash
+adb forward tcp:9222 localabstract:chrome_devtools_remote
+```
+
+Two things that look like app bugs and are not. **A swipe starting in the bottom ~50dp** goes to
+Android's home gesture: the page gets `pointercancel` and Chrome is sent to the background.
+**A tap during an animation** lands where the element *is*, not where it was drawn — wait out the
+280ms panel transition before judging a tap.
+
 ## Checking against the Monefy reference
 
 Set the browser to 591×1280 (the reference screenshot size) and compare with

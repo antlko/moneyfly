@@ -273,7 +273,16 @@ running the dev servers.
   after the cursor has left a 56px strip, and capture would get them — but while an element holds
   capture, the click that ends a *tap* is retargeted to it instead of the `≡` or pill pressed. So
   `pointerdown` on the handle adds `window` listeners until release, and a capture-phase click handler
-  swallows only the click a real drag ends with, reset on every press.
+  swallows only the click a mouse drag ends with — within 50ms of the release, never longer.
+- **A gesture the app drags itself must claim its `touchmove`s — `useClaimTouchMoves`
+  (`lib/gesture.ts`). `touch-action: none` is not enough.** It stops scrolling, but on Android
+  Chrome a quick swipe still ends in a *fling*, and a fling in progress spends the **next tap
+  anywhere** on stopping itself: `pointerdown`/`pointerup` arrive, `click` never does. That was
+  "after a swipe everything needs two taps", worse the faster the swipe — measured 0/15 first taps
+  landing without the claim, 15/15 with it. The balance row, the list's pull-down, both month pagers
+  and the records panel's header all claim; a new drag surface must too. It is invisible with a
+  mouse and in desktop device emulation, so verify touch work on a real Android Chrome — docs/
+  DEVELOPMENT.md §"Testing touch on an Android emulator" drives one with real touch input.
 - **…and it must not believe every `lostpointercapture` it sees.** A *touch* pointer is implicitly
   captured by whatever element it lands on, so calling `setPointerCapture` on an ancestor revokes
   that — and the descendant's `lostpointercapture` **bubbles** straight into the ancestor's own
