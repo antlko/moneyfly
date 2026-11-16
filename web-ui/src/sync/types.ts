@@ -3,7 +3,6 @@ export const ENTITIES = [
   'account',
   'category',
   'txn',
-  'budget',
   'recurring_rule',
   'user_setting',
   'account_snapshot',

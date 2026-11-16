@@ -214,3 +214,66 @@ function clampString(entry: string, maxDecimals: number): string {
   if (entry.length - dot - 1 <= maxDecimals) return entry
   return entry.slice(0, dot + 1 + maxDecimals)
 }
+
+/** A key event reduced to what `keyFromEvent` reads — no DOM type needed. */
+export interface KeyEventLike {
+  key: string
+  ctrlKey?: boolean
+  metaKey?: boolean
+  altKey?: boolean
+}
+
+/**
+ * Map a physical key to the calculator's vocabulary, for the desktop record
+ * screen. `null` means "not ours": Tab, Escape, arrows and every shortcut
+ * chord (Ctrl/Cmd/Alt + anything) go back to the browser untouched.
+ *
+ * `,` is a decimal point as well as `.` — half the world's number pads type
+ * one — and `Enter` is `'enter'` rather than `'='`, because the screen decides
+ * what Enter means (save, or fold a pending expression first).
+ *
+ * `x`/`X` multiply and `:` divide, since a keyboard has both on a letter or
+ * a shifted key far from the number pad.
+ */
+export function keyFromEvent(e: KeyEventLike): Key | 'enter' | null {
+  if (e.ctrlKey || e.metaKey || e.altKey) return null
+  const k = e.key
+  if (k.length === 1 && k >= '0' && k <= '9') return k as Digit
+  switch (k) {
+    case '.':
+    case ',':
+      return '.'
+    case '+':
+    case '-':
+    case '*':
+    case '/':
+    case '=':
+      return k
+    case 'x':
+    case 'X':
+      return '*'
+    case ':':
+      return '/'
+    case 'Backspace':
+      return 'backspace'
+    case 'Delete':
+      return 'clear'
+    case 'Enter':
+      return 'enter'
+    default:
+      return null
+  }
+}
+
+/**
+ * Turn pasted text into a calculator state, or `null` when it is not a plain
+ * amount. Accepts a decimal comma and surrounding whitespace, nothing else —
+ * `1,234.50` is ambiguous enough across locales that refusing beats guessing.
+ * Digits past `maxDecimals` are cut (not rounded) so what lands on screen is
+ * exactly what `clampDecimals` would leave.
+ */
+export function parsePasted(text: string, maxDecimals: number): CalcState | null {
+  const t = text.trim().replace(',', '.')
+  if (!/^\d+(\.\d+)?$/.test(t)) return null
+  return clampDecimals(typed(t), maxDecimals)
+}

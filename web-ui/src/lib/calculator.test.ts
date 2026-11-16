@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { clampDecimals, current, display, initialState, press, total, typed, type Key } from './calculator'
+import {
+  clampDecimals,
+  current,
+  display,
+  initialState,
+  keyFromEvent,
+  parsePasted,
+  press,
+  total,
+  typed,
+  type Key,
+} from './calculator'
 
 /** Type a sequence of keys and return the final state. */
 function type(keys: string, maxDecimals = 2) {
@@ -217,5 +228,73 @@ describe('typed', () => {
     state = press(state, 'backspace')
     state = press(state, 'backspace')
     expect(display(state)).toBe('14')
+  })
+})
+
+describe('typing 12.50 from the keypad', () => {
+  it('shows the point as soon as it is pressed, and keeps the zero', () => {
+    expect(shown('1 2 .')).toBe('12.')
+    expect(shown('1 2 . 5')).toBe('12.5')
+    expect(shown('1 2 . 5 0')).toBe('12.50')
+    expect(total(type('1 2 . 5 0'))).toBe(12.5)
+  })
+
+  it('starts a fraction from nothing', () => {
+    expect(shown('.')).toBe('0.')
+    expect(shown('. 5')).toBe('0.5')
+  })
+
+  it('is inert in a zero-decimal currency, so the digits run together (why the screen must say so)', () => {
+    expect(shown('1 2 . 5', 0)).toBe('125')
+  })
+})
+
+describe('keyFromEvent', () => {
+  it('maps digits, both decimal separators and the operators', () => {
+    expect(keyFromEvent({ key: '7' })).toBe('7')
+    expect(keyFromEvent({ key: '.' })).toBe('.')
+    expect(keyFromEvent({ key: ',' })).toBe('.')
+    for (const op of ['+', '-', '*', '/', '=']) expect(keyFromEvent({ key: op })).toBe(op)
+    expect(keyFromEvent({ key: 'x' })).toBe('*')
+    expect(keyFromEvent({ key: ':' })).toBe('/')
+  })
+
+  it('maps editing keys and leaves Enter for the screen', () => {
+    expect(keyFromEvent({ key: 'Backspace' })).toBe('backspace')
+    expect(keyFromEvent({ key: 'Delete' })).toBe('clear')
+    expect(keyFromEvent({ key: 'Enter' })).toBe('enter')
+  })
+
+  it('ignores everything else, and every shortcut chord', () => {
+    for (const key of ['Tab', 'Escape', 'ArrowDown', 'a', ' ', '10']) {
+      expect(keyFromEvent({ key })).toBeNull()
+    }
+    expect(keyFromEvent({ key: 'v', metaKey: true })).toBeNull()
+    expect(keyFromEvent({ key: '1', ctrlKey: true })).toBeNull()
+    expect(keyFromEvent({ key: '1', altKey: true })).toBeNull()
+  })
+
+  it('drives a full expression to the same total as the on-screen keypad', () => {
+    let state = initialState()
+    for (const k of ['1', '2', ',', '5', '+', '3', '.', '5']) {
+      state = press(state, keyFromEvent({ key: k }) as Key, 2)
+    }
+    expect(total(state)).toBe(16)
+  })
+})
+
+describe('parsePasted', () => {
+  it('accepts a plain amount with a point or a comma', () => {
+    expect(display(parsePasted(' 12.50 ', 2)!)).toBe('12.50')
+    expect(display(parsePasted('12,5', 2)!)).toBe('12.5')
+  })
+
+  it('cuts to the currency, never past it', () => {
+    expect(display(parsePasted('12.999', 2)!)).toBe('12.99')
+    expect(display(parsePasted('12.5', 0)!)).toBe('12')
+  })
+
+  it('refuses anything ambiguous', () => {
+    for (const bad of ['', 'abc', '1,234.50', '-5', '1e3']) expect(parsePasted(bad, 2)).toBeNull()
   })
 })

@@ -31,7 +31,7 @@
 ---
 
 > **Status: usable.** Install it, record spending in three taps, switch periods, run accounts and
-> transfers in several currencies, edit and search, set budgets and recurring records, import a
+> transfers in several currencies, edit and search, set recurring records, import a
 > Monefy export, export, integrate or script against your own data, and get a real analytics
 > dashboard on a wider screen, with a monthly capital view of your net worth — all of it working
 > with no connection, syncing when one returns. A few PWA niceties (dark theme, a PIN lock) are
@@ -144,7 +144,7 @@ admin.**
 
 moneyfly is a PWA: once your instance is running, install it like a native app on your phone —
 your own icon, full-screen, no browser chrome. Every action you take from then on — recording a
-spend, editing a category, setting a budget — is written to your device instantly and queued to
+spend, editing a category — is written to your device instantly and queued to
 sync with your server in the background, online or off. It reaches every other device signed into
 the same account the same way. See **[How sync works](#how-sync-works)** below for exactly what
 that means and what does or doesn't sync.
@@ -171,7 +171,7 @@ or anything else — in front of `:5007`.
 ## How sync works
 
 Every device — phone, laptop, a second phone — keeps a **full local replica** of your accounts,
-categories, transactions, budgets and recurring rules in its own IndexedDB. The UI always reads
+categories, transactions and recurring rules in its own IndexedDB. The UI always reads
 from that replica, never from the network, which is what makes recording a spend with no signal
 work exactly like recording one at home:
 
@@ -201,8 +201,8 @@ flowchart LR
 Full protocol — the exact wire format, retry rules, bootstrap and every conflict scenario — is
 documented in **[docs/SYNC.md](docs/SYNC.md)**. The short version:
 
-- **What syncs.** Five kinds of row travel through this op-log: `account`, `category`, `txn`
-  (expenses, income and transfers), `budget` and `recurring_rule`. Each carries a Lamport counter,
+- **What syncs.** Several kinds of row travel through this op-log: `account`, `category`, `txn`
+  (expenses, income and transfers), `recurring_rule`, `user_setting` and `account_snapshot`. Each carries a Lamport counter,
   the id of the device that last wrote it, and a `deleted` tombstone flag — rows are never hard
   `DELETE`d, because a hard delete can't propagate to a device that hasn't seen it yet.
 - **How a conflict resolves.** Every row's version is the pair `(lamport, device_id)`. The higher
@@ -314,7 +314,7 @@ including how to test sync between two devices, are in [docs/DEVELOPMENT.md](doc
 | 3 | Monefy dashboard and record screens | ✅ |
 | 4 | Accounts, transfers, search, periods | ✅ |
 | 5 | Multi-currency with daily FX rates | ✅ |
-| 6–7 | Budgets, recurring records | ✅ |
+| 6–7 | Recurring records | ✅ |
 | 8 | Monefy CSV import | ✅ |
 | 9 | Export profiles, webhooks, API tokens | ✅ |
 | 10 | Desktop analytics dashboard, account groups, capital check-ins | ✅ |

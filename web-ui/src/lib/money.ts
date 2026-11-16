@@ -1,6 +1,6 @@
 /**
  * Money is an integer number of minor units plus a currency code. Never a float:
- * 0.1 + 0.2 is not 0.3, and a budgeting app that quietly loses a cent per
+ * 0.1 + 0.2 is not 0.3, and an expense tracker that quietly loses a cent per
  * transaction is worse than useless.
  *
  * The number of minor units per major unit is **per currency**. Assuming two is

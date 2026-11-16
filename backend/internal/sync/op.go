@@ -21,7 +21,7 @@ var Entities = []string{
 	"account",
 	"category",
 	"txn",
-	"budget",
+	"budget", // legacy: the Budgets feature was removed; still accepted so queued ops from old devices never fail
 	"recurring_rule",
 	"user_setting",
 	"account_snapshot",
@@ -93,7 +93,7 @@ func IsEntity(name string) bool {
 var (
 	idPattern   = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 	datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	// A calendar month, the granularity budgets and reports work in.
+	// A calendar month, the granularity reports work in.
 	periodPattern = regexp.MustCompile(`^\d{4}-\d{2}$`)
 )
 
@@ -272,6 +272,8 @@ func validateTxn(f fields) error {
 	return nil
 }
 
+// validateBudget is legacy: no client writes budgets any more, but old devices
+// may still push queued ones and the write path must not fail on them.
 func validateBudget(f fields) error {
 	if _, ok := f.integer("limitMinor"); !ok {
 		return fmt.Errorf("limitMinor must be a whole number of minor units")

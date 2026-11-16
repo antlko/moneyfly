@@ -5,7 +5,13 @@ import { colorVar } from '@/lib/categories'
 import type { Row } from '@/sync/types'
 import CategoryIcon from './CategoryIcon.vue'
 
-defineProps<{ categories: Row[] }>()
+defineProps<{
+  categories: Row[]
+  /** The category already on the record, drawn ringed (editing, or arriving from the dashboard). */
+  selectedId?: string
+  /** More, smaller columns — for the desktop record screen, which has the width. */
+  dense?: boolean
+}>()
 defineEmits<{ select: [Row]; create: [] }>()
 </script>
 
@@ -15,12 +21,22 @@ defineEmits<{ select: [Row]; create: [] }>()
     not a selection to confirm afterwards. The trailing green "+" adds a
     category, exactly where the reference puts it.
   -->
-  <div class="grid grid-cols-4 gap-2 px-3">
+  <div
+    data-category-grid
+    class="grid gap-2 px-3"
+    :class="dense ? 'grid-cols-4 lg:grid-cols-6' : 'grid-cols-4'"
+  >
     <button
       v-for="category in categories"
       :key="category.id"
       type="button"
-      class="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-mf-green-soft bg-mf-surface/60 px-1 active:bg-mf-green-soft/40"
+      data-category
+      class="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border bg-mf-surface/60 px-1 active:bg-mf-green-soft/40"
+      :class="
+        category.id === selectedId
+          ? 'border-mf-green-dark ring-2 ring-mf-green-dark'
+          : 'border-mf-green-soft'
+      "
       @click="$emit('select', category)"
     >
       <CategoryIcon :icon="category.icon" :color="category.color" :size="26" />

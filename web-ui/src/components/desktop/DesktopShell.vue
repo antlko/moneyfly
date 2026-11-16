@@ -7,7 +7,6 @@ import {
   FileUp,
   LayoutDashboard,
   Minus,
-  PiggyBank,
   Plug,
   Plus,
   Repeat,
@@ -30,7 +29,7 @@ import { useSyncStore } from '@/stores/sync'
  *
  * Mounted once, in App.vue, around the whole `<RouterView>` — not per screen —
  * so navigating between sections is an instant content swap, not a a rebuilt
- * page. Secondary screens (Accounts, Budgets, …) render their existing
+ * page. Secondary screens (Accounts, Recurring, …) render their existing
  * components unmodified inside the content area; only the dashboard route
  * itself gets a bespoke desktop layout (DashboardView.vue picks between the
  * two — see lib/breakpoint.ts).
@@ -43,7 +42,6 @@ const BASE_NAV: { to: string; label: string; icon: Component }[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/accounts', label: 'Accounts', icon: Banknote },
   { to: '/capital', label: 'Capital', icon: ChartLine },
-  { to: '/budgets', label: 'Budgets', icon: PiggyBank },
   { to: '/recurring', label: 'Recurring', icon: Repeat },
   { to: '/currencies', label: 'Currencies', icon: CircleDollarSign },
   { to: '/import', label: 'Import', icon: FileUp },

@@ -467,7 +467,7 @@ export interface EraseResult {
   failureReason?: string
 }
 
-/** `records` = every transaction; `everything` adds accounts, categories, budgets, recurring. */
+/** `records` = every transaction; `everything` adds accounts, categories, recurring. */
 export type EraseScope = 'records' | 'everything'
 
 /** Imports that can still be undone, newest first. */

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LayoutGrid, Repeat, Trash2 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNotifyStore } from '@/stores/notify'
 
@@ -10,10 +10,20 @@ import CategoryGrid from '@/components/monefy/CategoryGrid.vue'
 import CategoryIcon from '@/components/monefy/CategoryIcon.vue'
 import DateRow from '@/components/monefy/DateRow.vue'
 import AmountKeypad from '@/components/monefy/AmountKeypad.vue'
+import DesktopRecordContent from '@/components/desktop/DesktopRecordContent.vue'
 import NewCategorySheet from '@/components/monefy/NewCategorySheet.vue'
 import RecurringSheet from '@/components/monefy/RecurringSheet.vue'
 import ScreenHeader from '@/components/monefy/ScreenHeader.vue'
-import { display, initialState, press, total, typed, type Key } from '@/lib/calculator'
+import { useIsDesktop } from '@/lib/breakpoint'
+import {
+  display,
+  initialState,
+  press,
+  total,
+  typed,
+  type CalcState,
+  type Key,
+} from '@/lib/calculator'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/categories'
 import { useClampOnCurrencyChange } from '@/lib/currencyClamp'
 import { dismissKeyboard, leaveAtOnce, useSystemKeyboard } from '@/lib/keyboard'
@@ -46,6 +56,8 @@ const settings = useSettingsStore()
 const recurring = useRecurringStore()
 const notify = useNotifyStore()
 const bursts = useRecordBurstStore()
+const isDesktop = useIsDesktop()
+const desktopRecord = useTemplateRef<InstanceType<typeof DesktopRecordContent>>('desktopRecord')
 
 /*
  * One screen, two steps — the amount, then the category. Not two routes: going
@@ -191,12 +203,27 @@ const title = computed(() => {
 
 function key(pressed: Key) {
   roundingNote.value = ''
+  // A currency with no minor unit has no decimal point to enter; saying so beats
+  // a key that silently does nothing (and digits that then run together).
+  if (pressed === '.' && exponent(currency.value) === 0) {
+    roundingNote.value = `${currency.value} has no decimals — amounts are whole numbers`
+    return
+  }
   calc.value = press(calc.value, pressed, exponent(currency.value))
 }
 
 function toCategories() {
   if (!hasAmount.value) return
-  step.value = 'category'
+  // The desktop screen shows the grid all the time; "choose a category" there
+  // means moving focus into it.
+  if (isDesktop.value) desktopRecord.value?.focusGrid()
+  else step.value = 'category'
+}
+
+/** Desktop only: a pasted amount replaces the calculator state wholesale. */
+function setCalc(next: CalcState) {
+  roundingNote.value = ''
+  calc.value = next
 }
 
 function confirm() {
@@ -340,7 +367,10 @@ function back() {
 </script>
 
 <template>
-  <div class="flex h-full flex-col bg-mf-bg sm:mx-auto sm:w-full sm:max-w-md">
+  <div
+    class="flex h-full flex-col bg-mf-bg sm:mx-auto sm:w-full"
+    :class="isDesktop ? 'sm:max-w-3xl' : 'sm:max-w-md'"
+  >
     <ScreenHeader :title="title" :on-back="back">
       <template #actions>
         <button
@@ -365,21 +395,50 @@ function back() {
       </template>
     </ScreenHeader>
 
-    <DateRow v-model:day="day" />
-
-    <AmountDisplay
+    <DesktopRecordContent
+      v-if="isDesktop"
+      ref="desktopRecord"
+      v-model:note="note"
+      v-model:day="day"
       :amount="amount"
       :currency="currency"
       :account-name="String(account?.name ?? '')"
-      @backspace="key('backspace')"
+      :decimals="exponent(currency)"
+      :categories="categories"
+      :selected-id="chosen?.id ? String(chosen.id) : undefined"
+      :has-amount="hasAmount"
+      :rounding-note="roundingNote"
+      :sheet-open="showAccounts || showNewCategory || showRecurringPicker"
+      @key="key"
+      @set="setCalc"
+      @select="record"
+      @confirm="confirm"
+      @create="showNewCategory = true"
       @pick-account="showAccounts = true"
+      @back="back"
     />
+
+    <template v-else>
+      <DateRow v-model:day="day" />
+
+      <AmountDisplay
+        :amount="amount"
+        :currency="currency"
+        :account-name="String(account?.name ?? '')"
+        @backspace="key('backspace')"
+        @pick-account="showAccounts = true"
+      />
       <p v-if="roundingNote" class="px-4 pt-1 text-center text-xs text-mf-red-text">
         {{ roundingNote }}
       </p>
 
-    <template v-if="step === 'amount'">
-      <label class="mx-3 mt-4 mb-3 flex items-center gap-2 border-b border-mf-muted/60 pb-2">
+      <!--
+      Outside the step switch: the note has to stay editable on the category
+      grid too, or fixing it means going back and losing your place.
+    -->
+      <label
+        class="mx-3 mt-4 mb-3 flex shrink-0 items-center gap-2 border-b border-mf-muted/60 pb-2"
+      >
         <span class="text-mf-muted">✎</span>
         <input
           v-model="note"
@@ -392,39 +451,46 @@ function back() {
         />
       </label>
 
-      <div
-        class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]"
-      >
-        <Transition name="mf-reveal" @leave="leaveAtOnce">
-          <AmountKeypad v-show="!keyboardUp" @press="key" />
-        </Transition>
-        <div class="flex gap-2 px-3">
-          <button
-            type="button"
-            :disabled="!hasAmount"
-            class="flex flex-1 items-center justify-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-base tracking-wide text-mf-green-dark uppercase disabled:opacity-40"
-            @click="confirm"
-          >
-            <CategoryIcon v-if="chosen" :icon="chosen.icon" :color="chosen.color" :size="22" />
-            {{ chosen ? chosen.name : 'Choose category' }}
-          </button>
-          <button
-            v-if="chosen"
-            type="button"
-            :disabled="!hasAmount"
-            aria-label="Choose a different category"
-            class="rounded-lg border border-mf-green-soft bg-mf-surface/60 px-4 text-mf-green-dark disabled:opacity-40"
-            @click="toCategories"
-          >
-            <LayoutGrid :size="22" :stroke-width="1.8" />
-          </button>
+      <template v-if="step === 'amount'">
+        <div
+          class="flex min-h-0 flex-1 flex-col justify-end gap-3 pb-[calc(0.75rem+var(--spacing-safe-b))]"
+        >
+          <Transition name="mf-reveal" @leave="leaveAtOnce">
+            <AmountKeypad v-show="!keyboardUp" :decimals="exponent(currency)" @press="key" />
+          </Transition>
+          <div class="flex gap-2 px-3">
+            <button
+              type="button"
+              :disabled="!hasAmount"
+              class="flex flex-1 items-center justify-center gap-2 rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-base tracking-wide text-mf-green-dark uppercase disabled:opacity-40"
+              @click="confirm"
+            >
+              <CategoryIcon v-if="chosen" :icon="chosen.icon" :color="chosen.color" :size="22" />
+              {{ chosen ? chosen.name : 'Choose category' }}
+            </button>
+            <button
+              v-if="chosen"
+              type="button"
+              :disabled="!hasAmount"
+              aria-label="Choose a different category"
+              class="rounded-lg border border-mf-green-soft bg-mf-surface/60 px-4 text-mf-green-dark disabled:opacity-40"
+              @click="toCategories"
+            >
+              <LayoutGrid :size="22" :stroke-width="1.8" />
+            </button>
+          </div>
         </div>
+      </template>
+
+      <div v-else class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]">
+        <CategoryGrid
+          :categories="categories"
+          :selected-id="chosen?.id ? String(chosen.id) : undefined"
+          @select="record"
+          @create="showNewCategory = true"
+        />
       </div>
     </template>
-
-    <div v-else class="min-h-0 flex-1 overflow-y-auto pt-4 pb-[calc(1rem+var(--spacing-safe-b))]">
-      <CategoryGrid :categories="categories" @select="record" @create="showNewCategory = true" />
-    </div>
 
     <Transition name="mf-sheet">
       <AccountSheet

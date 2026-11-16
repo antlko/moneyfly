@@ -66,8 +66,8 @@ function askErase(scope: EraseScope) {
     scope,
     text:
       scope === 'records'
-        ? 'Delete every record — expenses, incomes and transfers — on all your devices? Accounts, categories and budgets stay.'
-        : 'Delete everything — records, accounts, categories, budgets and recurring payments — on all your devices? The default categories and a Cash account are put back.',
+        ? 'Delete every record — expenses, incomes and transfers — on all your devices? Accounts and categories stay.'
+        : 'Delete everything — records, accounts, categories and recurring payments — on all your devices? The default categories and a Cash account are put back.',
   }
 }
 

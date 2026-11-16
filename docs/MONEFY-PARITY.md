@@ -304,7 +304,7 @@ extends the figure rather than wiping it. Backspace is how you start over.
 │ 💵                 0    ⌫  │   ← currency/account chip left, amount right
 │ EUR                        │
 └────────────────────────────┘
-✎ Add note                      ← visible on this step only
+✎ Add note                      ← stays visible on the category step too
 ┌───┬───┬───┬───┐
 │ 1 │ 2 │ 3 │ + │
 │ 4 │ 5 │ 6 │ − │
@@ -410,33 +410,6 @@ What actually materialises each occurrence is a server-side worker, not this scr
 docs/ARCHITECTURE.md §4c. The date shown as "next" is the stored `nextOn`, not something this screen
 computes; `lib/period.ts`'s `nextOccurrence` only predicts the date the *next* sheet-confirm will
 write, so what you see here always matches what the worker is about to post.
-
----
-
-## 2b. Budgets
-
-Unlike every other section here, this screen was not measured against a reference screenshot — the
-`budget` schema (`limitMinor`, `currency`, an optional `categoryId`, an optional `period`) predates
-this phase, and the UI is a deliberately small v1 built to it rather than a Monefy likeness. Worth
-recording *as* a scope decision, so it reads as a choice rather than an oversight next time this
-screen is touched:
-
-- **Every budget created here recurs every calendar month.** The schema also allows a fixed `period`
-  (`YYYY-MM`) for a one-off month — an absent `period` is what "every month" means, per
-  `validateBudget` in `backend/internal/sync/op.go` — but the create sheet does not offer a month
-  picker. The common case is "cap my food spending, every month," not "cap it this one month."
-- **A budget is always in the base currency.** The sheet does not offer a currency picker. A record in
-  a different currency still counts toward it, converted at the rate on the day it happened — the same
-  rule `dashboard.ts`'s totals use — so this is a smaller, not a different, calculation.
-- **An absent category means an overall cap**, shown first in the list, ahead of each category's own
-  budget alphabetically.
-- **The progress bar is two colours, not three.** Green under the limit, red at or over it. A closer
-  Monefy likeness shades amber approaching the limit; that needs a third colour token this pass did
-  not have a considered value for, so it was left out rather than guessed.
-- **A row spent in a currency with no known rate is not silently left out of the total** — the
-  invariant in CLAUDE.md that a missing rate must be visible, not just absent, applies here exactly as
-  it does on the dashboard. It is counted and surfaced as a small red line under the bar rather than a
-  dashboard-style banner, because a whole banner subsystem for one screen was more than this warranted.
 
 ---
 

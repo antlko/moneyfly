@@ -351,8 +351,13 @@ from each other), read in exactly two places:
   the *only* screen genuinely redesigned for the width — a period selector, summary cards, a category
   breakdown, account balances, a recent-records table — because it is the only one whose mobile layout
   (donut chart, swipe-paged carousel) does not already work at any width.
+- **`RecordView.vue`** swaps in `components/desktop/DesktopRecordContent.vue` at the desktop width:
+  amount (fed through the same calculator reducer, physical keys via `keyFromEvent`), note, date,
+  account and the full category grid on one screen; Enter saves, arrows move between categories, Esc
+  leaves. Save/recurring/delete logic stays in `RecordView`, shared with the mobile layout. The note
+  field is visible on both mobile steps; a 0-decimal currency dims the `.` key and says why.
 
-Every other route (Accounts, Budgets, the record screen, …) still renders its **existing** component
+Every other route (Accounts, Recurring, the record screen, …) still renders its **existing** component
 — same template, same logic — inside `DesktopShell`'s content area, deliberately never a second
 version built for the width. Building one would be a second place for every future field to be
 added. Two small, shared adjustments carry the rest of the way, both keyed off the same
@@ -367,7 +372,7 @@ added. Two small, shared adjustments carry the rest of the way, both keyed off t
   `mf-ink` on the plain desktop one with no second version of the button either.
 - **A `sm:max-w-*` on each screen's own content wrapper** keeps a short list or form from
   stretching edge-to-edge across a wide content pane — `sm:max-w-md` for the record/transfer
-  screens, `2xl`–`5xl` for the rest (Accounts `4xl`; Budgets and Currencies `5xl`, as a two-column
+  screens, `2xl`–`5xl` for the rest (Accounts `4xl`; Currencies `5xl`, as a two-column
   card grid and a two-column layout with a converter respectively; Capital takes the full width for
   its charts and month table). This is the one per-screen touch, because the *right* width differs
   by content, so one blanket rule on `DesktopShell` itself would be wrong for some screen either way.
@@ -503,3 +508,10 @@ month table under them is the table view: every bar and line is a row there.
   a style preference.
 - **No raw-config endpoint.** upmonitor has one; here the file holds OIDC secrets.
 - **No third-party cloud sync.** The server *is* the sync backend; that is the product.
+
+### Legacy: the removed Budgets feature
+
+Budgets were removed from the UI. The server still accepts `budget` ops, keeps the `budget` table
+(migration 00002 is applied and never edited) and tombstones its rows on "erase everything", so an
+old device with queued ops never fails the push. The client no longer has a `budget` store (Dexie v4
+drops it) and ignores `budget` rows arriving in a pull or snapshot.

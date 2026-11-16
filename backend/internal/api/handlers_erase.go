@@ -36,6 +36,8 @@ import (
 // that syncs half way through never shows records under a missing category.
 // user_setting is never included — base currency and the declared currency
 // list are preferences, not data, and the app cannot render without them.
+// "budget" is legacy (the feature was removed) but old rows may still exist, so
+// erasing everything still tombstones them.
 var eraseScopes = map[string][]string{
 	"records":    {"txn"},
 	"everything": {"txn", "recurring_rule", "budget", "account_snapshot", "account", "category"},

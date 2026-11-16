@@ -291,6 +291,11 @@ sign-in. `backend/internal/api/admin_test.go` and `internal/db/users_test.go` co
 (cascade delete, both last-admin refusals); treat those, not manual clicking, as the source of truth
 when changing them.
 
+## Desktop record shortcuts
+
+On the record screen at 640px and up: digits, `.` or `,`, `+ - * / =` for the amount; Enter saves
+(or moves to the category grid when none is chosen); arrow keys move between categories; Esc leaves.
+
 ## Cutting a release
 
 Releases are tagged, not pushed. `.github/workflows/docker-publish.yml` fires on `v*` tags only:

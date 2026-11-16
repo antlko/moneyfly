@@ -16,7 +16,6 @@ class MoneyflyDB extends Dexie {
   account!: EntityTable<Row, 'id'>
   category!: EntityTable<Row, 'id'>
   txn!: EntityTable<Row, 'id'>
-  budget!: EntityTable<Row, 'id'>
   recurring_rule!: EntityTable<Row, 'id'>
   user_setting!: EntityTable<Row, 'id'>
   /** What an account held at the end of a month — the capital check-in. */
@@ -45,7 +44,6 @@ class MoneyflyDB extends Dexie {
       account: 'id, deleted, [deleted+archived]',
       category: 'id, deleted, kind, [deleted+kind]',
       txn: 'id, deleted, occurredOn, [deleted+occurredOn], categoryId, accountId',
-      budget: 'id, deleted, period',
       recurring_rule: 'id, deleted, nextOn',
       user_setting: 'id, deleted',
       outbox: 'key, entity',
@@ -61,6 +59,11 @@ class MoneyflyDB extends Dexie {
       // Read whole (a few rows per account per month) and grouped in memory,
       // so only the indexes a direct lookup would use.
       account_snapshot: 'id, deleted, month, accountId',
+    })
+    this.version(4).stores({
+      // The Budgets feature was removed. null drops the store; the rows were only
+      // ever a replica, and the server still holds them (legacy, never read).
+      budget: null,
     })
   }
 

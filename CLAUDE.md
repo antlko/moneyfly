@@ -65,9 +65,10 @@ running the dev servers.
   `src/api/`. One route tree for both form factors — `useIsDesktop()` (`src/lib/breakpoint.ts`,
   640px, mirrored in a `tailwind.css` media query) is read in exactly two places: `App.vue` wraps
   every route in `DesktopShell.vue` (sidebar nav, persistent) at that width, and `DashboardView.vue`
-  separately swaps its own content for `DesktopDashboardContent.vue` — the only screen genuinely
-  redesigned for desktop, since it is the only one the mobile layout (donut, swipe paging) does not
-  already suit. Every other screen renders its existing mobile component unmodified inside
+  separately swaps its own content for `DesktopDashboardContent.vue`, and `RecordView.vue` swaps in
+  `DesktopRecordContent.vue` (keyboard-first, amount + note + category grid on one screen) — the two
+  screens whose mobile layout (donut, swipe paging, thumb keypad) does not suit a monitor. Every other
+  screen renders its existing mobile component unmodified inside
   `DesktopShell`'s content area; resizing never changes the URL either way.
 
 ## Invariants (breaking these causes real bugs)
@@ -372,6 +373,12 @@ running the dev servers.
   every `app.Use()` middleware, requestLogger included, has already returned. Reading the response
   object here sees whatever was on it *before* the error, not what the client is about to receive; a
   400 read this way logs as 200. See docs/ARCHITECTURE.md §2.
+
+## Amount entry
+
+- **Physical keys go through `keyFromEvent` (`lib/calculator.ts`) into the same calculator reducer**,
+  never a parallel parser. `,` is a decimal point. A 0-decimal currency (HUF) makes `.` inert, so the
+  screen must say why (dimmed key + inline message) instead of failing silently.
 
 ## Legal boundary
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Key } from '@/lib/calculator'
 
+const props = withDefaults(defineProps<{ decimals?: number }>(), { decimals: 2 })
 const emit = defineEmits<{ press: [Key] }>()
 
 // The reference layout, read straight off the record screen: digits in a 3-wide
@@ -22,6 +23,11 @@ const ROWS: Key[][] = [
 // button.
 const GLYPHS: Partial<Record<Key, string>> = { '-': '−', '*': '×', '/': '÷' }
 const glyph = (key: Key) => GLYPHS[key] ?? key
+
+// In a currency with no minor unit the point does nothing. It is dimmed, not
+// `disabled`: a disabled button swallows the tap in silence, which reads as a
+// broken key — a dimmed one still reports, and the screen says why.
+const dimmed = (key: Key) => key === '.' && props.decimals === 0
 </script>
 
 <template>
@@ -30,6 +36,8 @@ const glyph = (key: Key) => GLYPHS[key] ?? key
       v-for="key in ROWS.flat()"
       :key="key"
       type="button"
+      :class="dimmed(key) && 'opacity-40'"
+      :aria-label="dimmed(key) ? 'Decimal point (not used in this currency)' : undefined"
       class="rounded-lg border border-mf-green-soft bg-mf-surface/60 py-3.5 text-2xl font-light text-mf-ink transition-[transform,background-color] duration-75 active:scale-95 active:bg-mf-green-soft/70"
       @click="emit('press', key)"
     >

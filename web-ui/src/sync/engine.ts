@@ -15,7 +15,16 @@ import { deviceId } from '@/lib/device'
 import { plain } from '@/lib/plain'
 import { uuidv7 } from '@/lib/uuid'
 import { mergeChange } from './lww'
-import type { Change, Entity, Op, PullResponse, PushResponse, Row, SnapshotResponse } from './types'
+import {
+  ENTITIES,
+  type Change,
+  type Entity,
+  type Op,
+  type PullResponse,
+  type PushResponse,
+  type Row,
+  type SnapshotResponse,
+} from './types'
 
 export type SyncState = 'idle' | 'syncing' | 'offline' | 'error'
 
@@ -29,6 +38,8 @@ const POLL_INTERVAL_MS = 30_000
  * clock. `fx_rate` is not synced data at all — see docs/ARCHITECTURE.md §4b —
  * so a snapshot neither contains it nor can replace it.
  */
+const isLocalEntity = (entity: string): boolean => (ENTITIES as readonly string[]).includes(entity)
+
 const KEPT_ON_BOOTSTRAP = new Set(['outbox', 'meta', 'fx_rate'])
 /** How many pending ops go in one push. */
 const PUSH_BATCH = 500
@@ -366,6 +377,7 @@ export class SyncEngine {
     // briefly lose an offline write.
     const stillPending = await this.db.outbox.toArray()
     for (const op of stillPending) {
+      if (!isLocalEntity(op.entity)) continue
       const row = mergeChange(op, await this.db.rows(op.entity).get(op.id))
       if (row) await this.db.rows(op.entity).put(row)
     }
@@ -377,6 +389,9 @@ export class SyncEngine {
     await this.db.transaction('rw', this.db.tables, async () => {
       for (const change of changes) {
         maxLamport = Math.max(maxLamport, change.lamport)
+        // The server still carries legacy `budget` rows (the feature was removed);
+        // they advance the clock but have no local table.
+        if (!isLocalEntity(change.entity)) continue
         const row = mergeChange(change, await this.db.rows(change.entity).get(change.id))
         // null means the stored version is newer or identical — including when
         // this is our own op coming back, which is why echoes need no filtering.

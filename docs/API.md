@@ -4,7 +4,7 @@ JSON over HTTP, same origin as the SPA. Errors are always `{"error": "message"}`
 status — there is no second error shape anywhere.
 
 > Health, auth, sync, exchange rates, CSV import, export, API tokens, webhooks and admin user
-> management exist today. This document is filled in as later phases land. Budgets and recurring
+> management exist today. This document is filled in as later phases land. Recurring
 > records (phases 6–7) introduced no new endpoints — both ride the sync entities already listed
 > below; see docs/ARCHITECTURE.md §4c for the recurring worker.
 
@@ -115,7 +115,7 @@ The protocol, and why it is shaped this way, is [SYNC.md](SYNC.md). All four req
 ```jsonc
 // One operation. `data` is the row body; the server validates its shape, not its references.
 {
-  "entity": "txn",             // account | category | txn | budget | recurring_rule | user_setting | account_snapshot
+  "entity": "txn",             // account | category | txn | recurring_rule | user_setting | account_snapshot
   "id": "0199…",               // UUIDv7, minted on the client
   "lamport": 412,
   "deviceId": "0199…",
@@ -313,7 +313,7 @@ are written at.
 | --- | --- | --- |
 | `GET` | `/api/imports` | Imports that still have live records, newest first |
 | `DELETE` | `/api/imports/:id` | Tombstone every live record that import wrote. 404 for an id the caller does not own |
-| `POST` | `/api/data/erase` | `{scope}` — `"records"`: every transaction; `"everything"`: transactions, recurring rules, budgets, capital check-ins (`account_snapshot`), accounts, categories. Settings (`user_setting`) are never erased |
+| `POST` | `/api/data/erase` | `{scope}` — `"records"`: every transaction; `"everything"`: transactions, recurring rules, capital check-ins (`account_snapshot`), accounts, categories. Settings (`user_setting`) are never erased |
 
 ```jsonc
 // GET /api/imports
